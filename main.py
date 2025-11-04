@@ -46,8 +46,8 @@ def launch_persistent_ctx(pw, reset=False):
 def apply_windows_ua(ctx, page):
     page.add_init_script(f"""
         Object.defineProperty(navigator, 'userAgent', {{get: () => '{WIN_UA}' }});
-        Object.defineProperty(navigator, 'platform',  {{get: () => 'Win32' }});
-        Object.defineProperty(navigator, 'vendor',    {{get: () => 'Google Inc.' }});
+        Object.defineProperty(navigator, 'platform', {{get: () => 'Win32' }});
+        Object.defineProperty(navigator, 'vendor', {{get: () => 'Google Inc.' }});
         Object.defineProperty(navigator, 'maxTouchPoints', {{get: () => 0 }});
     """)
     try:
@@ -171,15 +171,14 @@ def get_token(reset=False):
                     with open("token.json", "r") as f:
                         old_token_dict = json.load(f)
                     if token_dict["p20t"] != old_token_dict.get("p20t", "") or token_dict["csrftoken"] != old_token_dict.get("csrftoken", ""):
-                        print("检测到 p20t 或 csrftoken 变更，已更新 token.json 文件")
+                        with open("token.json", "w") as f:
+                            f.write(json.dumps(token_dict, indent=4, ensure_ascii=False))
+                        print("检测到 p20t 或 csrftoken 变更, 已更新 token.json 文件")
                     elif token_dict["expirationTimestamp"] == -1:
                         expirationTimestamp = old_token_dict.get("expirationTimestamp", -1)
-                        token_dict["expirationTimestamp"] = expirationTimestamp
                 print("csrftoken:", csrftoken)
                 print("p20t:", p20t)
                 print("expirationTimestamp:", expirationTimestamp)
-                with open("token.json", "w") as f:
-                    f.write(json.dumps(token_dict, indent=4, ensure_ascii=False))
                 ctx.close()
                 break
 
