@@ -16,7 +16,7 @@ class DirectWebSocketClicker:
     def __init__(self):
         self.device_id = "40f06c22"
         self.adb_path = os.path.join(os.getcwd(), 'android-tools', 'platform-tools', 'adb.exe')
-        self.threshold = 102826
+        self.threshold = 90000  # 修改为当前BTC价格附近的值
         self.click_coords = (416, 2452)
         self.click_interval = 5
         self.last_click_time = 0
@@ -45,12 +45,16 @@ class DirectWebSocketClicker:
     def should_click(self, current_price):
         """判断是否应该点击"""
         if current_price <= self.threshold:
+            print(f"    ❌ 价格 {current_price:.2f} <= 阈值 {self.threshold}，不触发")
             return False
         
         current_time = time.time()
         if current_time - self.last_click_time < self.click_interval:
+            remaining = self.click_interval - (current_time - self.last_click_time)
+            print(f"    ⏳ 冷却中，还需等待 {remaining:.1f} 秒")
             return False
         
+        print(f"    ✅ 满足点击条件！价格 {current_price:.2f} > {self.threshold}")
         return True
     
     async def process_message(self, message):
@@ -92,8 +96,10 @@ class DirectWebSocketClicker:
         print("🚀 WebSocket连接成功!")
         print(f"📊 监听: BTCUSDT 1秒K线 (实时监控)")
         print(f"🎯 触发条件: 价格 > {self.threshold}")
+        print(f"📱 设备ID: {self.device_id}")
         print(f"📱 点击坐标: {self.click_coords}")
         print(f"⏱️ 点击间隔: {self.click_interval} 秒")
+        print(f"🔧 ADB路径: {self.adb_path}")
         print("-" * 60)
         
         while True:
