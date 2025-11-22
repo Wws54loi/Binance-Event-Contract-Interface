@@ -4,6 +4,7 @@ import asyncio
 import websockets
 import json
 import time
+import os
 from datetime import datetime
 import pandas as pd
 
@@ -43,6 +44,33 @@ class BoxSession:
         self.end_time = datetime.now()
         self.log(f"🛑 箱体 #{self.id} 停止: {reason}")
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "levels": self.levels,
+            "active_trades": self.active_trades,
+            "history": self.history,
+            "logs": self.logs,
+            "is_active": self.is_active,
+            "stop_reason": self.stop_reason,
+            "last_trade_time": self.last_trade_time
+        }
+
+    @staticmethod
+    def from_dict(data):
+        session = BoxSession(data["id"], data["levels"])
+        session.start_time = datetime.fromisoformat(data["start_time"]) if data.get("start_time") else None
+        session.end_time = datetime.fromisoformat(data["end_time"]) if data.get("end_time") else None
+        session.active_trades = data.get("active_trades", [])
+        session.history = data.get("history", [])
+        session.logs = data.get("logs", [])
+        session.is_active = data.get("is_active", False)
+        session.stop_reason = data.get("stop_reason")
+        session.last_trade_time = data.get("last_trade_time", {"s_res": 0, "w_res": 0, "w_sup": 0, "s_sup": 0})
+        return session
+
 class BoxMonitorBot:
     def __init__(self):
         self.running = False
@@ -51,6 +79,8 @@ class BoxMonitorBot:
         self.current_price = 0.0
         self.cooldown_seconds = 60
         self.lock = threading.Lock()
+        self.bot_start_time = datetime.now() # 记录机器人启动时间
+        self.stop_reason = None # 记录机器人停止原因
 
     def start_new_session(self, s_res, w_res, w_sup, s_sup):
         with self.lock:
@@ -96,18 +126,30 @@ class BoxMonitorBot:
         return None
 
     def start_ws(self):
+        if self.running: return
         self.running = True
         threading.Thread(target=self._run_ws_loop, daemon=True).start()
 
     def _run_ws_loop(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(self._connect_ws())
+        
+        while self.running:
+            try:
+                loop.run_until_complete(self._connect_ws())
+            except Exception as e:
+                print(f"WS Loop Error: {e}")
+            
+            if self.running:
+                print("⚠️ 连接断开，3秒后自动重连...")
+                time.sleep(3)
 
     async def _connect_ws(self):
         url = f"wss://fstream.binance.com/ws/{self.symbol}@aggTrade"
         try:
+            print(f"正在连接 {url} ...")
             async with websockets.connect(url) as ws:
+                print("🟢 WebSocket 连接成功")
                 while self.running:
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
@@ -124,8 +166,7 @@ class BoxMonitorBot:
                         break
         except Exception as e:
             print(f"连接失败: {e}")
-        finally:
-            self.running = False
+            # 不在这里设置 self.running = False，让外层循环重连
 
     def check_price(self, price):
         with self.lock:
@@ -208,6 +249,32 @@ class BoxMonitorBot:
             self.sessions = []
             self.running = False
 
+    def save_to_disk(self, filename="box_data.json"):
+        with self.lock:
+            data = [s.to_dict() for s in self.sessions]
+            try:
+                with open(filename, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                print(f"数据已保存到 {filename}")
+                return True
+            except Exception as e:
+                print(f"保存失败: {e}")
+                return False
+
+    def load_from_disk(self, filename="box_data.json"):
+        if not os.path.exists(filename):
+            return False
+        with self.lock:
+            try:
+                with open(filename, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.sessions = [BoxSession.from_dict(d) for d in data]
+                print(f"从 {filename} 加载了 {len(self.sessions)} 个箱体")
+                return True
+            except Exception as e:
+                print(f"加载失败: {e}")
+                return False
+
 # === Streamlit 界面逻辑 ===
 
 @st.cache_resource
@@ -247,6 +314,75 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
+    st.subheader("💾 数据管理")
+    
+    # 1. 服务器端保存 (适用于本地运行/VPS)
+    st.caption("服务器端操作 (本地/VPS)")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("📥 服务器保存", help="保存到运行程序的服务器硬盘", use_container_width=True):
+            if bot.save_to_disk():
+                st.success("已保存")
+            else:
+                st.error("保存失败")
+    with c2:
+        if st.button("📤 服务器加载", help="从运行程序的服务器硬盘加载", use_container_width=True):
+            if bot.load_from_disk():
+                st.success("加载成功")
+                st.rerun()
+
+    # 2. 浏览器端保存 (适用于 Streamlit Cloud 等云端环境)
+    st.caption("客户端操作 (下载到您电脑)")
+    
+    # 准备下载数据
+    json_str = json.dumps([s.to_dict() for s in bot.sessions], ensure_ascii=False, indent=2)
+    
+    col_dl, col_up = st.columns(2)
+    with col_dl:
+        st.download_button(
+            label="⬇️ 下载备份",
+            data=json_str,
+            file_name=f"box_data_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+            mime="application/json",
+            use_container_width=True
+        )
+    
+    with col_up:
+        # 上传组件比较特殊，通常不放在按钮里，直接显示
+        pass
+
+    uploaded_file = st.file_uploader("上传备份文件恢复", type=["json"], label_visibility="collapsed")
+    if uploaded_file is not None:
+        try:
+            data = json.load(uploaded_file)
+            with bot.lock:
+                bot.sessions = [BoxSession.from_dict(d) for d in data]
+            st.success(f"成功恢复 {len(bot.sessions)} 个箱体记录！")
+            # 稍微延迟后刷新，避免立即重置上传组件导致的问题
+            time.sleep(1)
+            st.rerun()
+        except Exception as e:
+            st.error(f"文件格式错误: {e}")
+
+    st.markdown("---")
+    st.markdown("**系统状态:**")
+    if bot.running:
+        st.success("🟢 正在运行")
+        # 计算运行时间
+        uptime = datetime.now() - bot.bot_start_time
+        days = uptime.days
+        hours, remainder = divmod(uptime.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        time_str = f"{hours}小时 {minutes}分"
+        if days > 0:
+            time_str = f"{days}天 {time_str}"
+        st.caption(f"已连续运行: {time_str}")
+        st.caption("提示: 只要不关闭黑色终端窗口，关闭浏览器网页也会继续运行。")
+    else:
+        st.error("🔴 已停止")
+        if bot.stop_reason:
+            st.warning(f"停止原因: {bot.stop_reason}")
+
     # if st.button("🗑️ 清空所有数据", type="secondary", use_container_width=True):
     #     bot.clear_all()
     #     st.rerun()
@@ -295,15 +431,43 @@ else:
                     df_active['time_str'] = df_active['entry_time'].apply(lambda x: datetime.fromtimestamp(x).strftime('%H:%M:%S'))
                     
                     display_data = []
+                    current_price = bot.current_price
+                    
                     for t in session.active_trades:
+                        # 计算倒计时
+                        remaining = int(t['expiry_time'] - time.time())
+                        if remaining < 0: remaining = 0
+                        mins, secs = divmod(remaining, 60)
+                        countdown_str = f"{mins:02d}:{secs:02d}"
+                        
+                        # 计算浮动盈亏
+                        if t['direction'] == "LONG":
+                            pnl = current_price - t['entry_price']
+                        else:
+                            pnl = t['entry_price'] - current_price
+                        
+                        # 盈亏状态文字 + Emoji颜色
+                        if pnl > 0:
+                            pnl_text = "🟢浮盈"
+                        elif pnl < 0:
+                            pnl_text = "🔴浮亏"
+                        else:
+                            pnl_text = "⚪持平"
+                        
+                        # 整合到状态栏: 持仓中 (倒计时) (盈亏状态)
+                        status_combined = f"持仓中 ({countdown_str}) ({pnl_text})"
+                        
                         display_data.append({
                             "买入时间": datetime.fromtimestamp(t['entry_time']).strftime('%H:%M:%S'),
                             "买入价格": f"{t['entry_price']:.2f}",
                             "方向": "做多" if t['direction'] == "LONG" else "做空",
-                            "状态": "持仓中",
+                            "当前价格": f"{current_price:.2f}",
+                            "状态": status_combined,
                             "原因": t['reason']
                         })
-                    st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
+                    
+                    df_display = pd.DataFrame(display_data)
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
                 else:
                     st.info("当前箱体无持仓")
                     

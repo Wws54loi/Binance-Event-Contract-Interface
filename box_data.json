@@ -1,0 +1,38 @@
+[
+  {
+    "id": 1,
+    "start_time": "2025-11-22T22:10:47.049078",
+    "end_time": null,
+    "levels": {
+      "s_res": 12.0,
+      "w_res": 143.0,
+      "w_sup": 123.0,
+      "s_sup": 0.0012421
+    },
+    "active_trades": [
+      {
+        "id": 1,
+        "direction": "SHORT",
+        "entry_price": 2727.41,
+        "entry_time": 1763820651.0013766,
+        "expiry_time": 1763821251.0013766,
+        "reason": "强压力位",
+        "level_key": "s_res",
+        "status": "OPEN"
+      }
+    ],
+    "history": [],
+    "logs": [
+      "[22:10:51] 🚀 触发交易! SHORT @ 2727.41 | 强压力位",
+      "[22:10:47] 🚀 新箱体 #1 启动 | 参数: {'s_res': 12.0, 'w_res': 143.0, 'w_sup': 123.0, 's_sup': 0.0012421}"
+    ],
+    "is_active": true,
+    "stop_reason": null,
+    "last_trade_time": {
+      "s_res": 1763820651.0013757,
+      "w_res": 0,
+      "w_sup": 0,
+      "s_sup": 0
+    }
+  }
+]
