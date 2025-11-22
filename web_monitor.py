@@ -14,20 +14,20 @@ BJ_TZ = timezone(timedelta(hours=8))
 
 # === 通知工具 ===
 def send_ntfy(msg, file_data=None, filename=None):
-    try:
-        url = "https://ntfy.sh/bnb"
-        if file_data:
-            # 发送文件: PUT 请求，Body 是文件内容，Header 指定文件名
-            # 注意: ntfy 接收文件时，Body 必须纯粹是文件数据
-            # 我们发送两个请求：一个提示消息，一个文件 (或者直接发文件，ntfy 会显示附件)
-            headers = {
-                "Filename": filename,
-            }
-            requests.put(url, data=file_data.encode('utf-8'), headers=headers)
-        else:
-            requests.post(url, data=msg.encode('utf-8'))
-    except Exception as e:
-        print(f"Ntfy error: {e}")
+    # 将发送逻辑封装在内部函数中
+    def _send():
+        try:
+            url = "https://ntfy.sh/bnb"
+            if file_data:
+                headers = {"Filename": filename}
+                requests.put(url, data=file_data.encode('utf-8'), headers=headers, timeout=10)
+            else:
+                requests.post(url, data=msg.encode('utf-8'), timeout=5)
+        except Exception as e:
+            print(f"Ntfy error: {e}")
+
+    # 启动后台线程发送，不阻塞主程序
+    threading.Thread(target=_send, daemon=True).start()
 
 # 设置页面配置
 st.set_page_config(
@@ -39,8 +39,10 @@ st.set_page_config(
 # === 核心逻辑类 ===
 
 class BoxSession:
-    def __init__(self, session_id, levels):
+    def __init__(self, session_id, levels, name=None, slippage=1.0):
         self.id = session_id
+        self.name = name
+        self.slippage = slippage
         self.start_time = datetime.now(BJ_TZ)
         self.end_time = None
         self.levels = levels
@@ -102,6 +104,8 @@ class BoxSession:
     def to_dict(self):
         return {
             "id": self.id,
+            "name": getattr(self, 'name', None),
+            "slippage": getattr(self, 'slippage', 1.0),
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "levels": self.levels,
@@ -116,15 +120,10 @@ class BoxSession:
     @staticmethod
     def from_dict(data):
         session = BoxSession(data["id"], data["levels"])
+        session.name = data.get("name")
+        session.slippage = data.get("slippage", 1.0)
         session.start_time = datetime.fromisoformat(data["start_time"]) if data.get("start_time") else None
         session.end_time = datetime.fromisoformat(data["end_time"]) if data.get("end_time") else None
-        
-        # 兼容旧数据：如果没有时区信息，强制设为北京时间 (假设旧数据是在本地运行生成的)
-        if session.start_time and session.start_time.tzinfo is None:
-            session.start_time = session.start_time.replace(tzinfo=BJ_TZ)
-        if session.end_time and session.end_time.tzinfo is None:
-            session.end_time = session.end_time.replace(tzinfo=BJ_TZ)
-            
         session.active_trades = data.get("active_trades", [])
         session.history = data.get("history", [])
         session.logs = data.get("logs", [])
@@ -145,7 +144,7 @@ class BoxMonitorBot:
         self.stop_reason = None # 记录机器人停止原因
         self.previous_price = 0.0 # 记录上一次价格，用于判断穿越
 
-    def start_new_session(self, s_res, w_res, w_sup, s_sup):
+    def start_new_session(self, s_res, w_res, w_sup, s_sup, name=None, slippage=1.0):
         with self.lock:
             # 停止当前活动的 session
             for s in self.sessions:
@@ -157,8 +156,8 @@ class BoxMonitorBot:
                 "w_sup": float(w_sup), "s_sup": float(s_sup)
             }
             new_id = len(self.sessions) + 1
-            new_session = BoxSession(new_id, levels)
-            msg = f"🚀 新箱体 #{new_id} 启动 | 参数: {levels}"
+            new_session = BoxSession(new_id, levels, name, slippage)
+            msg = f"🚀 新箱体 #{new_id} ({name if name else '未命名'}) 启动 | 参数: {levels} | 滑点保护: {slippage}"
             new_session.log(msg)
             send_ntfy(msg)
             self.sessions.append(new_session)
@@ -166,7 +165,7 @@ class BoxMonitorBot:
         if not self.running:
             self.start_ws()
 
-    def update_current_session(self, s_res, w_res, w_sup, s_sup):
+    def update_current_session(self, s_res, w_res, w_sup, s_sup, name=None, slippage=1.0):
         with self.lock:
             session = self.get_active_session()
             if session:
@@ -174,7 +173,10 @@ class BoxMonitorBot:
                     "s_res": float(s_res), "w_res": float(w_res),
                     "w_sup": float(w_sup), "s_sup": float(s_sup)
                 }
-                session.log(f"✅ 参数更新: {session.levels}")
+                if name is not None:
+                    session.name = name
+                session.slippage = slippage
+                session.log(f"✅ 参数更新: {session.levels}, 名称: {session.name}, 滑点: {session.slippage}")
                 return True
             return False
 
@@ -213,13 +215,17 @@ class BoxMonitorBot:
         url = f"wss://fstream.binance.com/ws/{self.symbol}@aggTrade"
         try:
             print(f"正在连接 {url} ...")
-            async with websockets.connect(url) as ws:
+            # 优化: 增加 ping_interval 和 ping_timeout 保持连接活性
+            async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 print("🟢 WebSocket 连接成功")
                 self.previous_price = 0.0 # 重置上一价格
                 
-                while self.running:
+                # 优化: 使用 async for 替代 while + wait_for，减少延迟和开销
+                async for msg in ws:
+                    if not self.running:
+                        break
+                    
                     try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         data = json.loads(msg)
                         price = float(data['p'])
                         
@@ -231,20 +237,18 @@ class BoxMonitorBot:
 
                         self.current_price = price
                         
+                        # 核心逻辑 (已优化为非阻塞通知)
                         self.check_price(price)
                         self.check_trades(price)
                         
                         # 更新上一价格
                         self.previous_price = price
                         
-                    except asyncio.TimeoutError:
-                        continue
                     except Exception as e:
-                        print(f"WebSocket Error: {e}")
-                        break
+                        print(f"Process Error: {e}")
+                        
         except Exception as e:
             print(f"连接失败: {e}")
-            # 不在这里设置 self.running = False，让外层循环重连
 
     def check_price(self, price):
         with self.lock:
@@ -265,24 +269,44 @@ class BoxMonitorBot:
             # 1. 压力位 (做空): 价格从下往上穿越或触碰 (prev < level <= price)
             if levels["s_res"] > 0 and prev < levels["s_res"] and price >= levels["s_res"]:
                 if now - session.last_trade_time["s_res"] > self.cooldown_seconds:
-                    self.execute_trade(session, "SHORT", price, "强压力位", "s_res")
+                    # 滑点检查
+                    slippage = getattr(session, 'slippage', 1.0)
+                    if (price - levels["s_res"]) > slippage:
+                        session.log(f"⚠️ 忽略交易: 强压力位触发但滑点过大 ({price} - {levels['s_res']} > {slippage})")
+                    else:
+                        self.execute_trade(session, "SHORT", price, "强压力位", "s_res", prev_price=prev)
             
             elif levels["w_res"] > 0 and prev < levels["w_res"] and price >= levels["w_res"]:
                  if price < levels["s_res"] or levels["s_res"] == 0: 
                     if now - session.last_trade_time["w_res"] > self.cooldown_seconds:
-                        self.execute_trade(session, "SHORT", price, "弱压力位", "w_res")
+                        # 滑点检查
+                        slippage = getattr(session, 'slippage', 1.0)
+                        if (price - levels["w_res"]) > slippage:
+                            session.log(f"⚠️ 忽略交易: 弱压力位触发但滑点过大 ({price} - {levels['w_res']} > {slippage})")
+                        else:
+                            self.execute_trade(session, "SHORT", price, "弱压力位", "w_res", prev_price=prev)
             
             # 2. 支撑位 (做多): 价格从上往下穿越或触碰 (prev > level >= price)
             if levels["s_sup"] > 0 and prev > levels["s_sup"] and price <= levels["s_sup"]:
                 if now - session.last_trade_time["s_sup"] > self.cooldown_seconds:
-                    self.execute_trade(session, "LONG", price, "强支撑位", "s_sup")
+                    # 滑点检查 (做多时，触发价是支撑位，成交价如果比支撑位低太多则滑点大)
+                    slippage = getattr(session, 'slippage', 1.0)
+                    if (levels["s_sup"] - price) > slippage:
+                        session.log(f"⚠️ 忽略交易: 强支撑位触发但滑点过大 ({levels['s_sup']} - {price} > {slippage})")
+                    else:
+                        self.execute_trade(session, "LONG", price, "强支撑位", "s_sup", prev_price=prev)
             
             elif levels["w_sup"] > 0 and prev > levels["w_sup"] and price <= levels["w_sup"]:
                 if price > levels["s_sup"] or levels["s_sup"] == 0:
                     if now - session.last_trade_time["w_sup"] > self.cooldown_seconds:
-                        self.execute_trade(session, "LONG", price, "弱支撑位", "w_sup")
+                        # 滑点检查
+                        slippage = getattr(session, 'slippage', 1.0)
+                        if (levels["w_sup"] - price) > slippage:
+                            session.log(f"⚠️ 忽略交易: 弱支撑位触发但滑点过大 ({levels['w_sup']} - {price} > {slippage})")
+                        else:
+                            self.execute_trade(session, "LONG", price, "弱支撑位", "w_sup", prev_price=prev)
 
-    def execute_trade(self, session, direction, price, reason, level_key):
+    def execute_trade(self, session, direction, price, reason, level_key, prev_price=0.0):
         session.last_trade_time[level_key] = time.time()
         trade = {
             "id": len(session.history) + len(session.active_trades) + 1,
@@ -292,10 +316,11 @@ class BoxMonitorBot:
             "expiry_time": time.time() + 600,
             "reason": reason,
             "level_key": level_key,
-            "status": "OPEN"
+            "status": "OPEN",
+            "prev_price": prev_price # 记录触发时的前一笔价格，方便排查
         }
         session.active_trades.append(trade)
-        msg = f"🚀 触发交易! {direction} @ {price} | {reason}"
+        msg = f"🚀 触发交易! {direction} @ {price} | {reason} (前价: {prev_price})"
         session.log(msg)
         send_ntfy(msg)
 
@@ -403,14 +428,19 @@ with st.sidebar:
     w_sup = st.number_input("弱支撑位 (做多)", value=defaults["w_sup"], format="%.2f")
     s_sup = st.number_input("强支撑位 (做多)", value=defaults["s_sup"], format="%.2f")
     
+    # 滑点保护设置
+    slippage_limit = st.number_input("最大允许滑点 (USDT)", value=1.0, min_value=0.0, step=0.5, help="如果触发时的价格与设定价格偏差超过此值，将放弃交易")
+
+    box_name = st.text_input("箱体名称 (可选)", value=active_session.name if active_session and active_session.name else "")
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🚀 启动新箱体", type="primary", use_container_width=True):
-            bot.start_new_session(s_res, w_res, w_sup, s_sup)
+            bot.start_new_session(s_res, w_res, w_sup, s_sup, name=box_name, slippage=slippage_limit)
             st.rerun()
     with col2:
         if st.button("🔄 更新参数", disabled=(active_session is None), use_container_width=True):
-            if bot.update_current_session(s_res, w_res, w_sup, s_sup):
+            if bot.update_current_session(s_res, w_res, w_sup, s_sup, name=box_name, slippage=slippage_limit):
                 st.success("已更新")
             else:
                 st.error("无活动箱体")
@@ -603,8 +633,8 @@ else:
                         status_combined = f"持仓中 ({countdown_str}) ({pnl_text})"
                         
                         all_display_data.append({
-                            "买入时间": datetime.fromtimestamp(t['entry_time'], BJ_TZ).strftime('%H:%M:%S'),
-                            "买入价格": f"{t['entry_price']:.2f}",
+                            "开仓时间": datetime.fromtimestamp(t['entry_time'], BJ_TZ).strftime('%H:%M:%S'),
+                            "开仓价格": f"{t['entry_price']:.2f}",
                             "方向": "做多" if t['direction'] == "LONG" else "做空",
                             "状态": status_combined,
                             "原因": t['reason'],
@@ -634,12 +664,15 @@ else:
                         
                         status_cn = "✅ 胜" if row['status'] == 'WIN' else "❌ 负"
                         
+                        # 尝试获取前一笔价格信息
+                        prev_info = f" (前价: {row.get('prev_price', '-')})" if row.get('prev_price') else ""
+
                         all_display_data.append({
-                            "买入时间": datetime.fromtimestamp(row['entry_time'], BJ_TZ).strftime('%H:%M:%S') if row.get('entry_time') else row.get('entry_time_str', '-'),
-                            "买入价格": f"{row['entry_price']:.2f}",
+                            "开仓时间": row.get('entry_time_str', '-'),
+                            "开仓价格": f"{row['entry_price']:.2f}",
                             "方向": "做多" if row['direction'] == "LONG" else "做空",
                             "状态": status_cn,
-                            "原因": row['reason'],
+                            "原因": f"{row['reason']}{prev_info}",
                             "平仓/当前价": f"{row['exit_price']:.2f}",
                             "累计胜率": f"{row['cum_win_rate']:.1f}%",
                             "失败原因": fail_reason,
