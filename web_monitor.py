@@ -81,6 +81,7 @@ class BoxMonitorBot:
         self.lock = threading.Lock()
         self.bot_start_time = datetime.now() # 记录机器人启动时间
         self.stop_reason = None # 记录机器人停止原因
+        self.previous_price = 0.0 # 记录上一次价格，用于判断穿越
 
     def start_new_session(self, s_res, w_res, w_sup, s_sup):
         with self.lock:
@@ -150,15 +151,28 @@ class BoxMonitorBot:
             print(f"正在连接 {url} ...")
             async with websockets.connect(url) as ws:
                 print("🟢 WebSocket 连接成功")
+                self.previous_price = 0.0 # 重置上一价格
+                
                 while self.running:
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         data = json.loads(msg)
                         price = float(data['p'])
+                        
+                        # 初始化上一价格
+                        if self.previous_price == 0:
+                            self.previous_price = price
+                            self.current_price = price
+                            continue
+
                         self.current_price = price
                         
                         self.check_price(price)
                         self.check_trades(price)
+                        
+                        # 更新上一价格
+                        self.previous_price = price
+                        
                     except asyncio.TimeoutError:
                         continue
                     except Exception as e:
@@ -179,20 +193,26 @@ class BoxMonitorBot:
 
             levels = session.levels
             now = time.time()
+            prev = self.previous_price
             
-            # 交易逻辑
-            if levels["s_res"] > 0 and price >= levels["s_res"]:
+            # 交易逻辑 - 必须是穿越触发 (Cross Over/Under)
+            
+            # 1. 压力位 (做空): 价格从下往上穿越 (prev < level <= price)
+            if levels["s_res"] > 0 and prev < levels["s_res"] and price >= levels["s_res"]:
                 if now - session.last_trade_time["s_res"] > self.cooldown_seconds:
                     self.execute_trade(session, "SHORT", price, "强压力位", "s_res")
-            elif levels["w_res"] > 0 and price >= levels["w_res"]:
+            
+            elif levels["w_res"] > 0 and prev < levels["w_res"] and price >= levels["w_res"]:
                  if price < levels["s_res"] or levels["s_res"] == 0: 
                     if now - session.last_trade_time["w_res"] > self.cooldown_seconds:
                         self.execute_trade(session, "SHORT", price, "弱压力位", "w_res")
             
-            if levels["s_sup"] > 0 and price <= levels["s_sup"]:
+            # 2. 支撑位 (做多): 价格从上往下穿越 (prev > level >= price)
+            if levels["s_sup"] > 0 and prev > levels["s_sup"] and price <= levels["s_sup"]:
                 if now - session.last_trade_time["s_sup"] > self.cooldown_seconds:
                     self.execute_trade(session, "LONG", price, "强支撑位", "s_sup")
-            elif levels["w_sup"] > 0 and price <= levels["w_sup"]:
+            
+            elif levels["w_sup"] > 0 and prev > levels["w_sup"] and price <= levels["w_sup"]:
                 if price > levels["s_sup"] or levels["s_sup"] == 0:
                     if now - session.last_trade_time["w_sup"] > self.cooldown_seconds:
                         self.execute_trade(session, "LONG", price, "弱支撑位", "w_sup")
