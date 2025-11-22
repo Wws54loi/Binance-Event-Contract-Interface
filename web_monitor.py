@@ -403,7 +403,10 @@ with st.sidebar:
     st.markdown("**系统状态:**")
     if bot.running:
         st.success("🟢 正在运行")
-        # 计算运行时间
+        # 计算运行时间 (兼容旧实例)
+        if not hasattr(bot, 'bot_start_time'):
+            bot.bot_start_time = datetime.now()
+            
         uptime = datetime.now() - bot.bot_start_time
         days = uptime.days
         hours, remainder = divmod(uptime.seconds, 3600)
