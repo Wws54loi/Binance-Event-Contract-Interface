@@ -6,8 +6,11 @@ import json
 import time
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import pandas as pd
+
+# === 配置 ===
+BJ_TZ = timezone(timedelta(hours=8))
 
 # === 通知工具 ===
 def send_ntfy(msg, file_data=None, filename=None):
@@ -38,7 +41,7 @@ st.set_page_config(
 class BoxSession:
     def __init__(self, session_id, levels):
         self.id = session_id
-        self.start_time = datetime.now()
+        self.start_time = datetime.now(BJ_TZ)
         self.end_time = None
         self.levels = levels
         self.active_trades = []
@@ -49,7 +52,7 @@ class BoxSession:
         self.last_trade_time = {"s_res": 0, "w_res": 0, "w_sup": 0, "s_sup": 0}
     
     def log(self, msg):
-        timestamp = datetime.now().strftime('%H:%M:%S')
+        timestamp = datetime.now(BJ_TZ).strftime('%H:%M:%S')
         full_msg = f"[{timestamp}] {msg}"
         print(full_msg)
         self.logs.insert(0, full_msg)
@@ -59,7 +62,7 @@ class BoxSession:
         if not self.is_active: return
         self.is_active = False
         self.stop_reason = reason
-        self.end_time = datetime.now()
+        self.end_time = datetime.now(BJ_TZ)
         
         # 1. 发送文本通知
         msg = f"🛑 箱体 #{self.id} 停止: {reason}"
@@ -131,7 +134,7 @@ class BoxMonitorBot:
         self.current_price = 0.0
         self.cooldown_seconds = 60
         self.lock = threading.Lock()
-        self.bot_start_time = datetime.now() # 记录机器人启动时间
+        self.bot_start_time = datetime.now(BJ_TZ) # 记录机器人启动时间
         self.stop_reason = None # 记录机器人停止原因
         self.previous_price = 0.0 # 记录上一次价格，用于判断穿越
 
@@ -307,8 +310,8 @@ class BoxMonitorBot:
         
         trade["status"] = "WIN" if is_win else "LOSS"
         trade["exit_price"] = current_price
-        trade["exit_time"] = datetime.now().strftime('%H:%M:%S')
-        trade["entry_time_str"] = datetime.fromtimestamp(trade["entry_time"]).strftime('%H:%M:%S')
+        trade["exit_time"] = datetime.now(BJ_TZ).strftime('%H:%M:%S')
+        trade["entry_time_str"] = datetime.fromtimestamp(trade["entry_time"], BJ_TZ).strftime('%H:%M:%S')
         
         session.history.append(trade)
         
@@ -456,7 +459,7 @@ with st.sidebar:
         st.download_button(
             label="⬇️ 下载备份",
             data=json_str,
-            file_name=f"box_data_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+            file_name=f"box_data_{datetime.now(BJ_TZ).strftime('%Y%m%d_%H%M')}.json",
             mime="application/json",
             use_container_width=True
         )
@@ -486,10 +489,17 @@ with st.sidebar:
         try:
             start_time = bot.bot_start_time
         except AttributeError:
-            start_time = datetime.now()
+            start_time = datetime.now(BJ_TZ)
             bot.bot_start_time = start_time
             
-        uptime = datetime.now() - start_time
+        # 确保 start_time 是 aware 的 (如果旧实例是 naive 的，假定它是本地时间并加上时区)
+        if start_time.tzinfo is None:
+             # 简单处理：如果是 naive，我们认为它是之前的系统时间。
+             # 为了计算 uptime，我们用 naive 的 datetime.now() 减去它即可，不需要转换
+             uptime = datetime.now() - start_time
+        else:
+             uptime = datetime.now(BJ_TZ) - start_time
+
         days = uptime.days
         hours, remainder = divmod(uptime.seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -586,7 +596,7 @@ else:
                         status_combined = f"持仓中 ({countdown_str}) ({pnl_text})"
                         
                         all_display_data.append({
-                            "买入时间": datetime.fromtimestamp(t['entry_time']).strftime('%H:%M:%S'),
+                            "买入时间": datetime.fromtimestamp(t['entry_time'], BJ_TZ).strftime('%H:%M:%S'),
                             "买入价格": f"{t['entry_price']:.2f}",
                             "方向": "做多" if t['direction'] == "LONG" else "做空",
                             "状态": status_combined,
