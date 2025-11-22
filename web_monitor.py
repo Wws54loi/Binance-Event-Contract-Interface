@@ -211,10 +211,10 @@ class BoxMonitorBot:
 # === Streamlit 界面逻辑 ===
 
 @st.cache_resource
-def get_bot():
+def get_session_bot():
     return BoxMonitorBot()
 
-bot = get_bot()
+bot = get_session_bot()
 
 # 侧边栏
 with st.sidebar:
