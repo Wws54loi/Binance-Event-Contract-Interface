@@ -124,6 +124,20 @@ class BoxSession:
         session.slippage = data.get("slippage", 1.0)
         session.start_time = datetime.fromisoformat(data["start_time"]) if data.get("start_time") else None
         session.end_time = datetime.fromisoformat(data["end_time"]) if data.get("end_time") else None
+        
+        # 修复时区问题：确保所有时间都转换为北京时间
+        if session.start_time:
+            if session.start_time.tzinfo is None:
+                session.start_time = session.start_time.replace(tzinfo=BJ_TZ)
+            else:
+                session.start_time = session.start_time.astimezone(BJ_TZ)
+                
+        if session.end_time:
+            if session.end_time.tzinfo is None:
+                session.end_time = session.end_time.replace(tzinfo=BJ_TZ)
+            else:
+                session.end_time = session.end_time.astimezone(BJ_TZ)
+
         session.active_trades = data.get("active_trades", [])
         session.history = data.get("history", [])
         session.logs = data.get("logs", [])
@@ -198,6 +212,13 @@ class BoxMonitorBot:
         self.running = True
         threading.Thread(target=self._run_ws_loop, daemon=True).start()
 
+    def log_system(self, msg):
+        # 辅助函数：将系统级消息记录到当前活动的 session 日志中
+        print(f"[System] {msg}")
+        session = self.get_active_session()
+        if session:
+            session.log(f"🔧 {msg}")
+
     def _run_ws_loop(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -206,19 +227,19 @@ class BoxMonitorBot:
             try:
                 loop.run_until_complete(self._connect_ws())
             except Exception as e:
-                print(f"WS Loop Error: {e}")
+                self.log_system(f"WS Loop Error: {e}")
             
             if self.running:
-                print("⚠️ 连接断开，3秒后自动重连...")
+                self.log_system("⚠️ 连接断开，3秒后自动重连...")
                 time.sleep(3)
 
     async def _connect_ws(self):
         url = f"wss://fstream.binance.com/ws/{self.symbol}@aggTrade"
         try:
-            print(f"正在连接 {url} ...")
+            self.log_system(f"正在连接行情服务器...")
             # 优化: 增加 ping_interval 和 ping_timeout 保持连接活性
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
-                print("🟢 WebSocket 连接成功")
+                self.log_system("🟢 WebSocket 连接成功")
                 self.previous_price = 0.0 # 重置上一价格
                 
                 # 优化: 使用 async for 替代 while + wait_for，减少延迟和开销
@@ -249,7 +270,7 @@ class BoxMonitorBot:
                         print(f"Process Error: {e}")
                         
         except Exception as e:
-            print(f"连接失败: {e}")
+            self.log_system(f"连接失败: {e}")
 
     def check_price(self, price):
         with self.lock:
@@ -668,8 +689,16 @@ else:
                         # 尝试获取前一笔价格信息
                         prev_info = f" (前价: {row.get('prev_price', '-')})" if row.get('prev_price') else ""
 
+                        # 动态计算时间以修正旧数据的时区问题
+                        entry_time_display = row.get('entry_time_str', '-')
+                        if row.get('entry_time'):
+                            try:
+                                entry_time_display = datetime.fromtimestamp(row['entry_time'], BJ_TZ).strftime('%H:%M:%S')
+                            except:
+                                pass
+
                         all_display_data.append({
-                            "开仓时间": row.get('entry_time_str', '-'),
+                            "开仓时间": entry_time_display,
                             "开仓价格": f"{row['entry_price']:.2f}",
                             "方向": "做多" if row['direction'] == "LONG" else "做空",
                             "状态": status_cn,
