@@ -176,8 +176,11 @@ class RealtimeAsianSniper:
                 self.klines[i+1]['rsi'] = rsi
 
         # 3. Avg Amp (ATR simplified)
+        # 修改：计算范围改为包含当前K线 (i)，即从 i-19 到 i，共20根
         for i in range(self.period_atr, len(self.klines)):
-            amps = [self.klines[j]['high'] - self.klines[j]['low'] for j in range(i-self.period_atr, i)]
+            # range(start, end) 不包含 end，所以要 i+1 才能包含 i
+            # 起点从 i-period_atr 改为 i-period_atr+1
+            amps = [self.klines[j]['high'] - self.klines[j]['low'] for j in range(i-self.period_atr+1, i+1)]
             self.klines[i]['avg_amp'] = sum(amps) / self.period_atr
 
         # 4. Update Volatility Thresholds
@@ -297,7 +300,9 @@ class RealtimeAsianSniper:
         if rsi < long_threshold: 
             if not is_giant_candle: # 必须非巨型K线
                 signal_type = 'LONG'
-                trigger_price = prev_k['bb_lower']
+                # 修改：为了匹配回测的 Open 入场逻辑，不再等待价格跌破下轨，而是立即入场
+                # 设置触发价格为无穷大，确保下一笔行情必定触发 (Price <= inf)
+                trigger_price = float('inf') 
                 if rsi < long_strong_threshold:
                     bet_amount = 15
                 else:
@@ -306,7 +311,9 @@ class RealtimeAsianSniper:
         elif rsi > short_threshold: 
             if not is_giant_candle: # 必须非巨型K线
                 signal_type = 'SHORT'
-                trigger_price = prev_k['bb_upper']
+                # 修改：为了匹配回测的 Open 入场逻辑，不再等待价格突破上轨，而是立即入场
+                # 设置触发价格为负无穷，确保下一笔行情必定触发 (Price >= -inf)
+                trigger_price = float('-inf')
                 if rsi > short_strong_threshold:
                     bet_amount = 15
                 else:

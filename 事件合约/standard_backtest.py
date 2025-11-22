@@ -41,7 +41,7 @@ class StandardBacktest(WickSniperStrategyPro):
             # Calculate Avg Amp (Volatility)
             for i in range(20, len(self.klines_1m)):
                 sum_amp = 0
-                for j in range(i-20, i):
+                for j in range(i-19, i+1):
                     sum_amp += (self.klines_1m[j]['high'] - self.klines_1m[j]['low'])
                 self.klines_1m[i]['avg_amp'] = sum_amp / 20
 
@@ -109,7 +109,7 @@ class StandardBacktest(WickSniperStrategyPro):
             # Giant Candle Check
             prev_amp = prev_k['high'] - prev_k['low']
             is_giant = False
-            if prev_amp > 3 * avg_amp and prev_amp > 15.0:
+            if avg_amp > 0 and prev_amp > 3 * avg_amp and prev_amp > 15.0:
                 is_giant = True
             
             if is_giant: continue
@@ -182,27 +182,38 @@ class StandardBacktest(WickSniperStrategyPro):
         total_profit = sum(d['profit'] for d in daily_stats.values())
         stopped_days = len([d for d in daily_stats.values() if d['stopped']])
         
+        total_trades = sum(d['trades'] for d in daily_stats.values())
+        total_wins = sum(d['wins'] for d in daily_stats.values())
+        win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+        
         print(f"Total Profit: {total_profit:.2f} U")
         print(f"Total Days: {total_days}")
         print(f"Days Stopped Out: {stopped_days} ({(stopped_days/total_days)*100:.1f}%)")
+        print(f"Total Trades: {total_trades}")
+        print(f"Win Rate: {win_rate:.2f}% ({total_wins}/{total_trades})")
         
         # Monthly Stats
         monthly_stats = {}
         for day, stats in daily_stats.items():
             month = day[:7] # YYYY-MM
             if month not in monthly_stats:
-                monthly_stats[month] = {'profit': 0, 'days': 0}
+                monthly_stats[month] = {'profit': 0, 'days': 0, 'trades': 0, 'wins': 0}
             monthly_stats[month]['profit'] += stats['profit']
             monthly_stats[month]['days'] += 1
+            monthly_stats[month]['trades'] += stats['trades']
+            monthly_stats[month]['wins'] += stats['wins']
             
         print(f"\n📅 Monthly Performance:")
-        print(f"{'Month':<10} | {'Profit':<10} | {'Avg/Day':<10}")
-        print("-" * 36)
+        print(f"{'Month':<10} | {'Profit':<10} | {'Avg/Day':<10} | {'Win Rate':<10}")
+        print("-" * 50)
         for month in sorted(monthly_stats.keys()):
             p = monthly_stats[month]['profit']
             d = monthly_stats[month]['days']
+            t = monthly_stats[month]['trades']
+            w = monthly_stats[month]['wins']
             avg = p / d if d > 0 else 0
-            print(f"{month:<10} | {p:<10.1f} | {avg:<10.1f}")
+            wr = (w / t * 100) if t > 0 else 0
+            print(f"{month:<10} | {p:<10.1f} | {avg:<10.1f} | {wr:<9.1f}%")
             
         # Streak Analysis
         print(f"\n📉 Losing Streak Analysis (Consecutive Losing Days):")
