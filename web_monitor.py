@@ -463,17 +463,15 @@ else:
             c3.metric("胜率", f"{rate:.1f}%")
             c4.metric("停止原因", session.stop_reason if session.stop_reason else "-")
 
-            # 三个 Tab
-            tab1, tab2, tab3 = st.tabs(["📈 当前持仓", "📜 历史记录", "📝 运行日志"])
+            # 两个 Tab：交易记录 (合并) 和 运行日志
+            tab_trades, tab_logs = st.tabs(["📜 交易记录", "📝 运行日志"])
             
-            with tab1:
+            with tab_trades:
+                all_display_data = []
+                current_price = bot.current_price
+
+                # 1. 处理当前持仓 (Active Trades)
                 if session.active_trades:
-                    df_active = pd.DataFrame(session.active_trades)
-                    df_active['time_str'] = df_active['entry_time'].apply(lambda x: datetime.fromtimestamp(x).strftime('%H:%M:%S'))
-                    
-                    display_data = []
-                    current_price = bot.current_price
-                    
                     for t in session.active_trades:
                         # 计算倒计时
                         remaining = int(t['expiry_time'] - time.time())
@@ -487,7 +485,7 @@ else:
                         else:
                             pnl = t['entry_price'] - current_price
                         
-                        # 盈亏状态文字 + Emoji颜色
+                        # 盈亏状态文字
                         if pnl > 0:
                             pnl_text = "🟢浮盈"
                         elif pnl < 0:
@@ -495,24 +493,21 @@ else:
                         else:
                             pnl_text = "⚪持平"
                         
-                        # 整合到状态栏: 持仓中 (倒计时) (盈亏状态)
                         status_combined = f"持仓中 ({countdown_str}) ({pnl_text})"
                         
-                        display_data.append({
+                        all_display_data.append({
                             "买入时间": datetime.fromtimestamp(t['entry_time']).strftime('%H:%M:%S'),
                             "买入价格": f"{t['entry_price']:.2f}",
                             "方向": "做多" if t['direction'] == "LONG" else "做空",
-                            "当前价格": f"{current_price:.2f}",
                             "状态": status_combined,
-                            "原因": t['reason']
+                            "原因": t['reason'],
+                            "平仓/当前价": f"{current_price:.2f}",
+                            "累计胜率": "-",
+                            "失败原因": "-",
+                            "sort_time": t['entry_time']
                         })
-                    
-                    df_display = pd.DataFrame(display_data)
-                    st.dataframe(df_display, use_container_width=True, hide_index=True)
-                else:
-                    st.info("当前箱体无持仓")
-                    
-            with tab2:
+
+                # 2. 处理历史记录 (History Trades)
                 if session.history:
                     df_hist = pd.DataFrame(session.history)
                     # 计算累计胜率
@@ -521,7 +516,6 @@ else:
                     df_hist['row_num'] = range(1, len(df_hist) + 1)
                     df_hist['cum_win_rate'] = (df_hist['cumsum_win'] / df_hist['row_num']) * 100
                     
-                    display_hist = []
                     for _, row in df_hist.iterrows():
                         fail_reason = "-"
                         if row['status'] == 'LOSS':
@@ -531,26 +525,29 @@ else:
                             }
                             fail_reason = mapping.get(row.get('level_key'), "未知")
                         
-                        status_cn = "胜" if row['status'] == 'WIN' else "负"
+                        status_cn = "✅ 胜" if row['status'] == 'WIN' else "❌ 负"
                         
-                        display_hist.append({
+                        all_display_data.append({
                             "买入时间": row.get('entry_time_str', '-'),
                             "买入价格": f"{row['entry_price']:.2f}",
+                            "方向": "做多" if row['direction'] == "LONG" else "做空",
                             "状态": status_cn,
                             "原因": row['reason'],
-                            "平仓价": f"{row['exit_price']:.2f}",
+                            "平仓/当前价": f"{row['exit_price']:.2f}",
                             "累计胜率": f"{row['cum_win_rate']:.1f}%",
                             "失败原因": fail_reason,
                             "sort_time": row['entry_time']
                         })
-                    
-                    df_display = pd.DataFrame(display_hist)
+
+                if all_display_data:
+                    df_display = pd.DataFrame(all_display_data)
+                    # 按时间倒序排列 (最新的在最上面)
                     df_display = df_display.sort_values('sort_time', ascending=False).drop(columns=['sort_time'])
                     st.dataframe(df_display, use_container_width=True, hide_index=True)
                 else:
-                    st.info("当前箱体无历史交易")
+                    st.info("暂无交易记录")
                     
-            with tab3:
+            with tab_logs:
                 log_text = "\n".join(session.logs)
                 # 使用 unique key 避免冲突
                 st.text_area("箱体日志", log_text, height=300, disabled=True, key=f"log_{session.id}")
