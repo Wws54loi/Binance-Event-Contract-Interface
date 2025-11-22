@@ -247,9 +247,9 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    if st.button("🗑️ 清空所有数据", type="secondary", use_container_width=True):
-        bot.clear_all()
-        st.rerun()
+    # if st.button("🗑️ 清空所有数据", type="secondary", use_container_width=True):
+    #     bot.clear_all()
+    #     st.rerun()
 
 # 主界面
 st.title("📊 ETHUSDT 箱体震荡实盘监控")
