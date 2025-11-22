@@ -695,5 +695,5 @@ else:
 
 # 自动刷新
 if bot.running:
-    time.sleep(2)
+    time.sleep(0.5)
     st.rerun()
