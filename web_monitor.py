@@ -251,7 +251,24 @@ class BoxMonitorBot:
 
     def save_to_disk(self, filename="box_data.json"):
         with self.lock:
-            data = [s.to_dict() for s in self.sessions]
+            # 增加兼容性处理
+            data = []
+            for s in self.sessions:
+                if hasattr(s, 'to_dict'):
+                    data.append(s.to_dict())
+                else:
+                    data.append({
+                        "id": s.id,
+                        "start_time": s.start_time.isoformat() if s.start_time else None,
+                        "end_time": s.end_time.isoformat() if s.end_time else None,
+                        "levels": s.levels,
+                        "active_trades": s.active_trades,
+                        "history": s.history,
+                        "logs": s.logs,
+                        "is_active": s.is_active,
+                        "stop_reason": getattr(s, 'stop_reason', None),
+                        "last_trade_time": getattr(s, 'last_trade_time', {"s_res": 0, "w_res": 0, "w_sup": 0, "s_sup": 0})
+                    })
             try:
                 with open(filename, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
@@ -334,8 +351,26 @@ with st.sidebar:
     # 2. 浏览器端保存 (适用于 Streamlit Cloud 等云端环境)
     st.caption("客户端操作 (下载到您电脑)")
     
-    # 准备下载数据
-    json_str = json.dumps([s.to_dict() for s in bot.sessions], ensure_ascii=False, indent=2)
+    # 准备下载数据 (增加兼容性处理)
+    def safe_to_dict(s):
+        if hasattr(s, 'to_dict'):
+            return s.to_dict()
+        else:
+            # 兼容旧版本对象
+            return {
+                "id": s.id,
+                "start_time": s.start_time.isoformat() if s.start_time else None,
+                "end_time": s.end_time.isoformat() if s.end_time else None,
+                "levels": s.levels,
+                "active_trades": s.active_trades,
+                "history": s.history,
+                "logs": s.logs,
+                "is_active": s.is_active,
+                "stop_reason": getattr(s, 'stop_reason', None),
+                "last_trade_time": getattr(s, 'last_trade_time', {"s_res": 0, "w_res": 0, "w_sup": 0, "s_sup": 0})
+            }
+
+    json_str = json.dumps([safe_to_dict(s) for s in bot.sessions], ensure_ascii=False, indent=2)
     
     col_dl, col_up = st.columns(2)
     with col_dl:
