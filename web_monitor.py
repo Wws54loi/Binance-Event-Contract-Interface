@@ -6,6 +6,7 @@ import json
 import time
 import os
 import requests
+import html
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 
@@ -573,6 +574,7 @@ with st.sidebar:
         if days > 0:
             time_str = f"{days}天 {time_str}"
         st.caption(f"已连续运行: {time_str}")
+        st.caption(f"最后刷新: {datetime.now(BJ_TZ).strftime('%H:%M:%S')}")
         st.caption("提示: 只要不关闭黑色终端窗口，关闭浏览器网页也会继续运行。")
     else:
         st.error("🔴 已停止")
@@ -734,8 +736,26 @@ else:
                     
             with tab_logs:
                 log_text = "\n".join(session.logs)
-                # 使用 unique key 避免冲突
-                st.text_area("箱体日志", log_text, height=300, disabled=True, key=f"log_{session.id}")
+                # 使用 HTML div 替代 text_area 以确保实时更新，并增加自动滚动效果
+                st.markdown(
+                    f"""
+                    <div style="
+                        height: 300px;
+                        overflow-y: auto;
+                        background-color: rgba(0, 0, 0, 0.2);
+                        color: inherit;
+                        padding: 10px;
+                        border: 1px solid rgba(255, 255, 255, 0.1);
+                        border-radius: 5px;
+                        font-family: monospace;
+                        font-size: 0.8em;
+                        white-space: pre-wrap;
+                        display: flex;
+                        flex-direction: column-reverse; 
+                    ">{html.escape(log_text)}</div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
 # 自动刷新
 if bot.running:
