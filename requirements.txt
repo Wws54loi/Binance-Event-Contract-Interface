@@ -4,3 +4,6 @@ qrcode
 pillow
 Appium-Python-Client
 selenium
+websockets
+streamlit
+pandas

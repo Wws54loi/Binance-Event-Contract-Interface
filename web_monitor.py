@@ -29,20 +29,23 @@ class BoxMonitorBot:
         self.last_trade_time = {"s_res": 0, "w_res": 0, "w_sup": 0, "s_sup": 0}
         self.cooldown_seconds = 60
         self.stop_reason = None
+        self.lock = threading.Lock()
 
     def set_levels(self, s_res, w_res, w_sup, s_sup):
-        self.levels = {
-            "s_res": float(s_res), "w_res": float(w_res),
-            "w_sup": float(w_sup), "s_sup": float(s_sup)
-        }
+        with self.lock:
+            self.levels = {
+                "s_res": float(s_res), "w_res": float(w_res),
+                "w_sup": float(w_sup), "s_sup": float(s_sup)
+            }
         self.log(f"✅ 参数更新: 强压{s_res} | 弱压{w_res} | 弱撑{w_sup} | 强撑{s_sup}")
 
     def log(self, msg):
         timestamp = datetime.now().strftime('%H:%M:%S')
         full_msg = f"[{timestamp}] {msg}"
         print(full_msg)
-        self.logs.insert(0, full_msg) # 最新日志在最前
-        if len(self.logs) > 100: self.logs.pop()
+        with self.lock:
+            self.logs.insert(0, full_msg) # 最新日志在最前
+            if len(self.logs) > 100: self.logs.pop()
 
     def start(self):
         if self.running: return
@@ -88,18 +91,21 @@ class BoxMonitorBot:
     def check_price(self, price):
         now = time.time()
         # 逻辑同前...
-        if self.levels["s_res"] > 0 and price >= self.levels["s_res"]:
+        with self.lock:
+            levels = self.levels.copy()
+            
+        if levels["s_res"] > 0 and price >= levels["s_res"]:
             if now - self.last_trade_time["s_res"] > self.cooldown_seconds:
                 self.execute_trade("SHORT", price, "强压力位", "s_res")
-        elif self.levels["w_res"] > 0 and price >= self.levels["w_res"]:
-             if price < self.levels["s_res"] or self.levels["s_res"] == 0: 
+        elif levels["w_res"] > 0 and price >= levels["w_res"]:
+             if price < levels["s_res"] or levels["s_res"] == 0: 
                 if now - self.last_trade_time["w_res"] > self.cooldown_seconds:
                     self.execute_trade("SHORT", price, "弱压力位", "w_res")
-        if self.levels["s_sup"] > 0 and price <= self.levels["s_sup"]:
+        if levels["s_sup"] > 0 and price <= levels["s_sup"]:
             if now - self.last_trade_time["s_sup"] > self.cooldown_seconds:
                 self.execute_trade("LONG", price, "强支撑位", "s_sup")
-        elif self.levels["w_sup"] > 0 and price <= self.levels["w_sup"]:
-            if price > self.levels["s_sup"] or self.levels["s_sup"] == 0:
+        elif levels["w_sup"] > 0 and price <= levels["w_sup"]:
+            if price > levels["s_sup"] or levels["s_sup"] == 0:
                 if now - self.last_trade_time["w_sup"] > self.cooldown_seconds:
                     self.execute_trade("LONG", price, "弱支撑位", "w_sup")
 
@@ -115,16 +121,26 @@ class BoxMonitorBot:
             "level_key": level_key,
             "status": "OPEN"
         }
-        self.active_trades.append(trade)
+        with self.lock:
+            self.active_trades.append(trade)
         self.log(f"🚀 触发交易! {direction} @ {price} | {reason}")
 
     def check_trades(self, current_price):
-        for trade in self.active_trades[:]:
+        # Create a copy to iterate safely
+        with self.lock:
+            trades_to_check = self.active_trades[:]
+            
+        for trade in trades_to_check:
             if time.time() >= trade["expiry_time"]:
                 self.settle_trade(trade, current_price)
 
     def settle_trade(self, trade, current_price):
-        self.active_trades.remove(trade)
+        with self.lock:
+            if trade in self.active_trades:
+                self.active_trades.remove(trade)
+            else:
+                return # Already removed?
+
         is_win = (trade["direction"] == "LONG" and current_price > trade["entry_price"]) or \
                  (trade["direction"] == "SHORT" and current_price < trade["entry_price"])
         
@@ -132,7 +148,9 @@ class BoxMonitorBot:
         trade["exit_price"] = current_price
         trade["exit_time"] = datetime.now().strftime('%H:%M:%S')
         trade["entry_time_str"] = datetime.fromtimestamp(trade["entry_time"]).strftime('%H:%M:%S')
-        self.history.append(trade)
+        
+        with self.lock:
+            self.history.append(trade)
         
         res_str = "✅ 赢" if is_win else "❌ 输"
         self.log(f"🏁 结算 #{trade['id']}: {res_str} ({trade['entry_price']} -> {current_price})")
