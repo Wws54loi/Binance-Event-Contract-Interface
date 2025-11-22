@@ -260,97 +260,95 @@ status_color = "green" if active_session else "red"
 status_text = f"运行中 (箱体 #{active_session.id})" if active_session else "已停止"
 st.markdown(f"### 状态: :{status_color}[{status_text}] | 当前价格: **{bot.current_price:.2f}**")
 
-# 箱体选择器
-session_options = {s.id: f"箱体 #{s.id} ({s.start_time.strftime('%H:%M')})" for s in bot.sessions}
-selected_session_id = None
-
-if bot.sessions:
-    # 默认选择最新的
-    selected_session_id = st.selectbox("选择要查看的箱体记录:", 
-                                     options=sorted(session_options.keys(), reverse=True),
-                                     format_func=lambda x: session_options[x])
-else:
+# 箱体列表展示
+if not bot.sessions:
     st.info("暂无箱体记录，请在左侧启动新箱体。")
-
-# 显示选中箱体的数据
-if selected_session_id:
-    # 找到对应的 session 对象
-    session = next((s for s in bot.sessions if s.id == selected_session_id), None)
-    
-    if session:
-        # 箱体统计
-        total = len(session.history)
-        wins = len([t for t in session.history if t["status"] == "WIN"])
-        rate = (wins / total * 100) if total > 0 else 0.0
+else:
+    # 按时间倒序显示 (最新的在最上面)
+    for session in reversed(bot.sessions):
+        # 标题格式：日期 时间 (ID)
+        start_str = session.start_time.strftime('%Y-%m-%d %H:%M:%S')
+        status_icon = "🟢" if session.is_active else "🔴"
+        title = f"{status_icon} {start_str} | 箱体 #{session.id}"
         
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("箱体状态", "🟢 活跃" if session.is_active else "🔴 已结束")
-        c2.metric("总交易", total)
-        c3.metric("胜率", f"{rate:.1f}%")
-        c4.metric("停止原因", session.stop_reason if session.stop_reason else "-")
-
-        # 三个 Tab
-        tab1, tab2, tab3 = st.tabs(["📈 当前持仓", "📜 历史记录", "📝 运行日志"])
+        # 默认展开正在运行的，或者最新的一个
+        is_expanded = session.is_active or (session == bot.sessions[-1])
         
-        with tab1:
-            if session.active_trades:
-                df_active = pd.DataFrame(session.active_trades)
-                df_active['time_str'] = df_active['entry_time'].apply(lambda x: datetime.fromtimestamp(x).strftime('%H:%M:%S'))
-                
-                display_data = []
-                for t in session.active_trades:
-                    display_data.append({
-                        "买入时间": datetime.fromtimestamp(t['entry_time']).strftime('%H:%M:%S'),
-                        "买入价格": f"{t['entry_price']:.2f}",
-                        "方向": "做多" if t['direction'] == "LONG" else "做空",
-                        "状态": "持仓中",
-                        "原因": t['reason']
-                    })
-                st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
-            else:
-                st.info("当前箱体无持仓")
-                
-        with tab2:
-            if session.history:
-                df_hist = pd.DataFrame(session.history)
-                # 计算累计胜率
-                df_hist['is_win'] = df_hist['status'] == 'WIN'
-                df_hist['cumsum_win'] = df_hist['is_win'].cumsum()
-                df_hist['row_num'] = range(1, len(df_hist) + 1)
-                df_hist['cum_win_rate'] = (df_hist['cumsum_win'] / df_hist['row_num']) * 100
-                
-                display_hist = []
-                for _, row in df_hist.iterrows():
-                    fail_reason = "-"
-                    if row['status'] == 'LOSS':
-                        mapping = {
-                            "s_res": "离开强压力位", "w_res": "离开弱压力位",
-                            "s_sup": "离开强支撑位", "w_sup": "离开弱支撑位"
-                        }
-                        fail_reason = mapping.get(row.get('level_key'), "未知")
+        with st.expander(title, expanded=is_expanded):
+            # 箱体统计
+            total = len(session.history)
+            wins = len([t for t in session.history if t["status"] == "WIN"])
+            rate = (wins / total * 100) if total > 0 else 0.0
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("箱体状态", "活跃" if session.is_active else "已结束")
+            c2.metric("总交易", total)
+            c3.metric("胜率", f"{rate:.1f}%")
+            c4.metric("停止原因", session.stop_reason if session.stop_reason else "-")
+
+            # 三个 Tab
+            tab1, tab2, tab3 = st.tabs(["📈 当前持仓", "📜 历史记录", "📝 运行日志"])
+            
+            with tab1:
+                if session.active_trades:
+                    df_active = pd.DataFrame(session.active_trades)
+                    df_active['time_str'] = df_active['entry_time'].apply(lambda x: datetime.fromtimestamp(x).strftime('%H:%M:%S'))
                     
-                    status_cn = "胜" if row['status'] == 'WIN' else "负"
+                    display_data = []
+                    for t in session.active_trades:
+                        display_data.append({
+                            "买入时间": datetime.fromtimestamp(t['entry_time']).strftime('%H:%M:%S'),
+                            "买入价格": f"{t['entry_price']:.2f}",
+                            "方向": "做多" if t['direction'] == "LONG" else "做空",
+                            "状态": "持仓中",
+                            "原因": t['reason']
+                        })
+                    st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
+                else:
+                    st.info("当前箱体无持仓")
                     
-                    display_hist.append({
-                        "买入时间": row.get('entry_time_str', '-'),
-                        "买入价格": f"{row['entry_price']:.2f}",
-                        "状态": status_cn,
-                        "原因": row['reason'],
-                        "平仓价": f"{row['exit_price']:.2f}",
-                        "累计胜率": f"{row['cum_win_rate']:.1f}%",
-                        "失败原因": fail_reason,
-                        "sort_time": row['entry_time']
-                    })
-                
-                df_display = pd.DataFrame(display_hist)
-                df_display = df_display.sort_values('sort_time', ascending=False).drop(columns=['sort_time'])
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
-            else:
-                st.info("当前箱体无历史交易")
-                
-        with tab3:
-            log_text = "\n".join(session.logs)
-            st.text_area("箱体日志", log_text, height=300, disabled=True)
+            with tab2:
+                if session.history:
+                    df_hist = pd.DataFrame(session.history)
+                    # 计算累计胜率
+                    df_hist['is_win'] = df_hist['status'] == 'WIN'
+                    df_hist['cumsum_win'] = df_hist['is_win'].cumsum()
+                    df_hist['row_num'] = range(1, len(df_hist) + 1)
+                    df_hist['cum_win_rate'] = (df_hist['cumsum_win'] / df_hist['row_num']) * 100
+                    
+                    display_hist = []
+                    for _, row in df_hist.iterrows():
+                        fail_reason = "-"
+                        if row['status'] == 'LOSS':
+                            mapping = {
+                                "s_res": "离开强压力位", "w_res": "离开弱压力位",
+                                "s_sup": "离开强支撑位", "w_sup": "离开弱支撑位"
+                            }
+                            fail_reason = mapping.get(row.get('level_key'), "未知")
+                        
+                        status_cn = "胜" if row['status'] == 'WIN' else "负"
+                        
+                        display_hist.append({
+                            "买入时间": row.get('entry_time_str', '-'),
+                            "买入价格": f"{row['entry_price']:.2f}",
+                            "状态": status_cn,
+                            "原因": row['reason'],
+                            "平仓价": f"{row['exit_price']:.2f}",
+                            "累计胜率": f"{row['cum_win_rate']:.1f}%",
+                            "失败原因": fail_reason,
+                            "sort_time": row['entry_time']
+                        })
+                    
+                    df_display = pd.DataFrame(display_hist)
+                    df_display = df_display.sort_values('sort_time', ascending=False).drop(columns=['sort_time'])
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                else:
+                    st.info("当前箱体无历史交易")
+                    
+            with tab3:
+                log_text = "\n".join(session.logs)
+                # 使用 unique key 避免冲突
+                st.text_area("箱体日志", log_text, height=300, disabled=True, key=f"log_{session.id}")
 
 # 自动刷新
 if bot.running:
