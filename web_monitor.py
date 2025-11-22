@@ -5,8 +5,26 @@ import websockets
 import json
 import time
 import os
+import requests
 from datetime import datetime
 import pandas as pd
+
+# === 通知工具 ===
+def send_ntfy(msg, file_data=None, filename=None):
+    try:
+        url = "https://ntfy.sh/bnb"
+        if file_data:
+            # 发送文件: PUT 请求，Body 是文件内容，Header 指定文件名
+            # 注意: ntfy 接收文件时，Body 必须纯粹是文件数据
+            # 我们发送两个请求：一个提示消息，一个文件 (或者直接发文件，ntfy 会显示附件)
+            headers = {
+                "Filename": filename,
+            }
+            requests.put(url, data=file_data.encode('utf-8'), headers=headers)
+        else:
+            requests.post(url, data=msg.encode('utf-8'))
+    except Exception as e:
+        print(f"Ntfy error: {e}")
 
 # 设置页面配置
 st.set_page_config(
@@ -42,7 +60,41 @@ class BoxSession:
         self.is_active = False
         self.stop_reason = reason
         self.end_time = datetime.now()
-        self.log(f"🛑 箱体 #{self.id} 停止: {reason}")
+        
+        # 1. 发送文本通知
+        msg = f"🛑 箱体 #{self.id} 停止: {reason}"
+        self.log(msg)
+        send_ntfy(msg)
+        
+        # 2. 自动保存到本地 (服务器端)
+        self.save_to_file()
+        
+        # 3. 自动推送到 ntfy (作为云端自动下载的替代方案)
+        try:
+            # 准备数据 (使用 safe_to_dict 逻辑的简化版，因为在类内部可以直接调用 to_dict)
+            json_str = json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+            filename = f"box_{self.id}_{self.start_time.strftime('%Y%m%d_%H%M')}.json"
+            send_ntfy(f"📂 数据文件", file_data=json_str, filename=filename)
+            self.log(f"📤 数据已推送至 ntfy")
+        except Exception as e:
+            self.log(f"❌ ntfy 推送失败: {e}")
+
+    def save_to_file(self):
+        try:
+            folder = "sessions_data"
+            if not os.path.exists(folder):
+                os.makedirs(folder)
+            
+            # 文件名格式: box_{id}_{start_time}.json
+            time_str = self.start_time.strftime("%Y%m%d_%H%M%S")
+            filename = f"{folder}/box_{self.id}_{time_str}.json"
+            
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
+            
+            self.log(f"💾 数据已自动保存至 {filename}")
+        except Exception as e:
+            self.log(f"❌ 自动保存失败: {e}")
 
     def to_dict(self):
         return {
@@ -96,7 +148,9 @@ class BoxMonitorBot:
             }
             new_id = len(self.sessions) + 1
             new_session = BoxSession(new_id, levels)
-            new_session.log(f"🚀 新箱体 #{new_id} 启动 | 参数: {levels}")
+            msg = f"🚀 新箱体 #{new_id} 启动 | 参数: {levels}"
+            new_session.log(msg)
+            send_ntfy(msg)
             self.sessions.append(new_session)
             
         if not self.running:
@@ -196,8 +250,9 @@ class BoxMonitorBot:
             prev = self.previous_price
             
             # 交易逻辑 - 必须是穿越触发 (Cross Over/Under)
+            # 注意: >= 和 <= 包含 "刚好碰到" 的情况
             
-            # 1. 压力位 (做空): 价格从下往上穿越 (prev < level <= price)
+            # 1. 压力位 (做空): 价格从下往上穿越或触碰 (prev < level <= price)
             if levels["s_res"] > 0 and prev < levels["s_res"] and price >= levels["s_res"]:
                 if now - session.last_trade_time["s_res"] > self.cooldown_seconds:
                     self.execute_trade(session, "SHORT", price, "强压力位", "s_res")
@@ -207,7 +262,7 @@ class BoxMonitorBot:
                     if now - session.last_trade_time["w_res"] > self.cooldown_seconds:
                         self.execute_trade(session, "SHORT", price, "弱压力位", "w_res")
             
-            # 2. 支撑位 (做多): 价格从上往下穿越 (prev > level >= price)
+            # 2. 支撑位 (做多): 价格从上往下穿越或触碰 (prev > level >= price)
             if levels["s_sup"] > 0 and prev > levels["s_sup"] and price <= levels["s_sup"]:
                 if now - session.last_trade_time["s_sup"] > self.cooldown_seconds:
                     self.execute_trade(session, "LONG", price, "强支撑位", "s_sup")
@@ -230,7 +285,9 @@ class BoxMonitorBot:
             "status": "OPEN"
         }
         session.active_trades.append(trade)
-        session.log(f"🚀 触发交易! {direction} @ {price} | {reason}")
+        msg = f"🚀 触发交易! {direction} @ {price} | {reason}"
+        session.log(msg)
+        send_ntfy(msg)
 
     def check_trades(self, current_price):
         with self.lock:
@@ -256,7 +313,9 @@ class BoxMonitorBot:
         session.history.append(trade)
         
         res_str = "✅ 赢" if is_win else "❌ 输"
-        session.log(f"🏁 结算 #{trade['id']}: {res_str} ({trade['entry_price']} -> {current_price})")
+        msg = f"🏁 结算 #{trade['id']}: {res_str} ({trade['entry_price']} -> {current_price})"
+        session.log(msg)
+        send_ntfy(msg)
         
         if not is_win and session.is_active:
             if trade["level_key"] == "s_res":
@@ -482,6 +541,17 @@ else:
             c2.metric("总交易", total)
             c3.metric("胜率", f"{rate:.1f}%")
             c4.metric("停止原因", session.stop_reason if session.stop_reason else "-")
+
+            # 提供单独下载该箱体数据的按钮
+            if not session.is_active:
+                session_json = json.dumps(safe_to_dict(session), ensure_ascii=False, indent=2)
+                st.download_button(
+                    label="⬇️ 下载该箱体记录",
+                    data=session_json,
+                    file_name=f"box_{session.id}_{session.start_time.strftime('%Y%m%d_%H%M')}.json",
+                    mime="application/json",
+                    key=f"dl_{session.id}"
+                )
 
             # 两个 Tab：交易记录 (合并) 和 运行日志
             tab_trades, tab_logs = st.tabs(["📜 交易记录", "📝 运行日志"])
