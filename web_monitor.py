@@ -118,6 +118,13 @@ class BoxSession:
         session = BoxSession(data["id"], data["levels"])
         session.start_time = datetime.fromisoformat(data["start_time"]) if data.get("start_time") else None
         session.end_time = datetime.fromisoformat(data["end_time"]) if data.get("end_time") else None
+        
+        # 兼容旧数据：如果没有时区信息，强制设为北京时间 (假设旧数据是在本地运行生成的)
+        if session.start_time and session.start_time.tzinfo is None:
+            session.start_time = session.start_time.replace(tzinfo=BJ_TZ)
+        if session.end_time and session.end_time.tzinfo is None:
+            session.end_time = session.end_time.replace(tzinfo=BJ_TZ)
+            
         session.active_trades = data.get("active_trades", [])
         session.history = data.get("history", [])
         session.logs = data.get("logs", [])
@@ -628,7 +635,7 @@ else:
                         status_cn = "✅ 胜" if row['status'] == 'WIN' else "❌ 负"
                         
                         all_display_data.append({
-                            "买入时间": row.get('entry_time_str', '-'),
+                            "买入时间": datetime.fromtimestamp(row['entry_time'], BJ_TZ).strftime('%H:%M:%S') if row.get('entry_time') else row.get('entry_time_str', '-'),
                             "买入价格": f"{row['entry_price']:.2f}",
                             "方向": "做多" if row['direction'] == "LONG" else "做空",
                             "状态": status_cn,
