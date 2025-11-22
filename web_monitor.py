@@ -436,6 +436,10 @@ def get_session_bot():
 
 bot = get_session_bot()
 
+# 强制更新实例的类定义，以修复热重载导致的方法签名不匹配问题
+if bot.__class__ is not BoxMonitorBot:
+    bot.__class__ = BoxMonitorBot
+
 # 侧边栏
 with st.sidebar:
     st.header("⚙️ 箱体控制")
