@@ -43,7 +43,7 @@ class BoxSession:
         self.id = session_id
         self.name = name
         self.slippage = slippage
-        self.start_time = datetime.now(BJ_TZ)
+        self.start_time = datetime.now(timezone.utc).astimezone(BJ_TZ)
         self.end_time = None
         self.levels = levels
         self.active_trades = []
@@ -54,7 +54,8 @@ class BoxSession:
         self.last_trade_time = {"s_res": 0, "w_res": 0, "w_sup": 0, "s_sup": 0}
     
     def log(self, msg):
-        timestamp = datetime.now(BJ_TZ).strftime('%H:%M:%S')
+        # 强制使用 UTC 时间转换为北京时间，确保准确
+        timestamp = datetime.now(timezone.utc).astimezone(BJ_TZ).strftime('%H:%M:%S')
         full_msg = f"[{timestamp}] {msg}"
         print(full_msg)
         self.logs.insert(0, full_msg)
@@ -64,7 +65,7 @@ class BoxSession:
         if not self.is_active: return
         self.is_active = False
         self.stop_reason = reason
-        self.end_time = datetime.now(BJ_TZ)
+        self.end_time = datetime.now(timezone.utc).astimezone(BJ_TZ)
         
         # 1. 发送文本通知
         msg = f"🛑 箱体 #{self.id} 停止: {reason}"
@@ -154,9 +155,10 @@ class BoxMonitorBot:
         self.current_price = 0.0
         self.cooldown_seconds = 60
         self.lock = threading.Lock()
-        self.bot_start_time = datetime.now(BJ_TZ) # 记录机器人启动时间
+        self.bot_start_time = datetime.now(timezone.utc).astimezone(BJ_TZ) # 记录机器人启动时间
         self.stop_reason = None # 记录机器人停止原因
         self.previous_price = 0.0 # 记录上一次价格，用于判断穿越
+        self.last_ws_update = 0 # 记录最后一次 WS 更新时间戳
 
     def start_new_session(self, s_res, w_res, w_sup, s_sup, name=None, slippage=1.0):
         with self.lock:
@@ -258,6 +260,7 @@ class BoxMonitorBot:
                             continue
 
                         self.current_price = price
+                        self.last_ws_update = time.time()
                         
                         # 核心逻辑 (已优化为非阻塞通知)
                         self.check_price(price)
@@ -588,7 +591,14 @@ st.title("📊 ETHUSDT 箱体震荡实盘监控")
 active_session = bot.get_active_session()
 status_color = "green" if active_session else "red"
 status_text = f"运行中 (箱体 #{active_session.id})" if active_session else "已停止"
-st.markdown(f"### 状态: :{status_color}[{status_text}] | 当前价格: **{bot.current_price:.2f}**")
+
+# 计算延迟
+last_update = getattr(bot, 'last_ws_update', 0)
+latency = time.time() - last_update if last_update > 0 else 999
+latency_color = "green" if latency < 2 else "red"
+latency_text = f"{latency:.1f}s" if last_update > 0 else "无数据"
+
+st.markdown(f"### 状态: :{status_color}[{status_text}] | 当前价格: **{bot.current_price:.2f}** | 延迟: :{latency_color}[{latency_text}]")
 
 # 箱体列表展示
 if not bot.sessions:
