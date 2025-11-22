@@ -176,7 +176,8 @@ class BoxMonitorBot:
                 if name is not None:
                     session.name = name
                 session.slippage = slippage
-                session.log(f"✅ 参数更新: {session.levels}, 名称: {session.name}, 滑点: {session.slippage}")
+                current_name = getattr(session, 'name', '未命名')
+                session.log(f"✅ 参数更新: {session.levels}, 名称: {current_name}, 滑点: {session.slippage}")
                 return True
             return False
 
@@ -431,7 +432,7 @@ with st.sidebar:
     # 滑点保护设置
     slippage_limit = st.number_input("最大允许滑点 (USDT)", value=1.0, min_value=0.0, step=0.5, help="如果触发时的价格与设定价格偏差超过此值，将放弃交易")
 
-    box_name = st.text_input("箱体名称 (可选)", value=active_session.name if active_session and active_session.name else "")
+    box_name = st.text_input("箱体名称 (可选)", value=getattr(active_session, 'name', "") if active_session else "")
 
     col1, col2 = st.columns(2)
     with col1:
