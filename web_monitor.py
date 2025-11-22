@@ -404,10 +404,13 @@ with st.sidebar:
     if bot.running:
         st.success("🟢 正在运行")
         # 计算运行时间 (兼容旧实例)
-        if not hasattr(bot, 'bot_start_time'):
-            bot.bot_start_time = datetime.now()
+        try:
+            start_time = bot.bot_start_time
+        except AttributeError:
+            start_time = datetime.now()
+            bot.bot_start_time = start_time
             
-        uptime = datetime.now() - bot.bot_start_time
+        uptime = datetime.now() - start_time
         days = uptime.days
         hours, remainder = divmod(uptime.seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
