@@ -573,8 +573,9 @@ with st.sidebar:
         st.caption("提示: 只要不关闭黑色终端窗口，关闭浏览器网页也会继续运行。")
     else:
         st.error("🔴 已停止")
-        if bot.stop_reason:
-            st.warning(f"停止原因: {bot.stop_reason}")
+        stop_reason = getattr(bot, 'stop_reason', None)
+        if stop_reason:
+            st.warning(f"停止原因: {stop_reason}")
 
     # if st.button("🗑️ 清空所有数据", type="secondary", use_container_width=True):
     #     bot.clear_all()
