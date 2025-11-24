@@ -300,7 +300,8 @@ class BoxMonitorBot:
                     if (price - levels["s_res"]) > slippage:
                         session.log(f"⚠️ 忽略交易: 强压力位触发但滑点过大 ({price} - {levels['s_res']} > {slippage})")
                     else:
-                        self.execute_trade(session, "SHORT", price, "强压力位", "s_res", prev_price=prev)
+                        # 强压力位改为反买 (做多/突破)
+                        self.execute_trade(session, "LONG", price, "强压力位(反买)", "s_res", prev_price=prev)
             
             elif levels["w_res"] > 0 and prev < levels["w_res"] and price >= levels["w_res"]:
                  if price < levels["s_res"] or levels["s_res"] == 0: 
@@ -320,7 +321,8 @@ class BoxMonitorBot:
                     if (levels["s_sup"] - price) > slippage:
                         session.log(f"⚠️ 忽略交易: 强支撑位触发但滑点过大 ({levels['s_sup']} - {price} > {slippage})")
                     else:
-                        self.execute_trade(session, "LONG", price, "强支撑位", "s_sup", prev_price=prev)
+                        # 强支撑位改为反买 (做空/跌破)
+                        self.execute_trade(session, "SHORT", price, "强支撑位(反买)", "s_sup", prev_price=prev)
             
             elif levels["w_sup"] > 0 and prev > levels["w_sup"] and price <= levels["w_sup"]:
                 if price > levels["s_sup"] or levels["s_sup"] == 0:
