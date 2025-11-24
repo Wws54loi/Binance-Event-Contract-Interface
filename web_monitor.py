@@ -281,10 +281,12 @@ class BoxMonitorBot:
             session = self.get_active_session()
             if not session: return
             
-            # 限制只能有一个持仓
-            if len(session.active_trades) > 0:
-                return
-
+            # 持仓限制逻辑优化:
+            # 1. 默认限制只能有一个持仓
+            # 2. 例外: 如果当前持仓是弱位单，且新触发的是强位突破单(反买)，允许双仓
+            
+            current_trades_count = len(session.active_trades)
+            
             levels = session.levels
             now = time.time()
             prev = self.previous_price
@@ -294,45 +296,73 @@ class BoxMonitorBot:
             
             # 1. 压力位 (做空): 价格从下往上穿越或触碰 (prev < level <= price)
             if levels["s_res"] > 0 and prev < levels["s_res"] and price >= levels["s_res"]:
-                if now - session.last_trade_time["s_res"] > self.cooldown_seconds:
-                    # 滑点检查
-                    slippage = getattr(session, 'slippage', 1.0)
-                    if (price - levels["s_res"]) > slippage:
-                        session.log(f"⚠️ 忽略交易: 强压力位触发但滑点过大 ({price} - {levels['s_res']} > {slippage})")
-                    else:
-                        # 强压力位改为反买 (做多/突破)
-                        self.execute_trade(session, "LONG", price, "强压力位(反买)", "s_res", prev_price=prev)
+                # 强压力位反买 (做多)
+                # 检查是否允许开仓: 0持仓 OR (1持仓且为弱位单)
+                allow_trade = False
+                if current_trades_count == 0:
+                    allow_trade = True
+                elif current_trades_count == 1:
+                    # 检查已持仓是否为弱位单 (w_res 或 w_sup)
+                    # 注意: 这里不限制方向，只要是弱位单就允许强位突破加仓/对冲
+                    existing_trade = session.active_trades[0]
+                    if existing_trade['level_key'] in ['w_res', 'w_sup']:
+                        allow_trade = True
+                
+                if allow_trade:
+                    if now - session.last_trade_time["s_res"] > self.cooldown_seconds:
+                        # 滑点检查
+                        slippage = getattr(session, 'slippage', 1.0)
+                        if (price - levels["s_res"]) > slippage:
+                            session.log(f"⚠️ 忽略交易: 强压力位触发但滑点过大 ({price} - {levels['s_res']} > {slippage})")
+                        else:
+                            # 强压力位改为反买 (做多/突破)
+                            self.execute_trade(session, "LONG", price, "强压力位(反买)", "s_res", prev_price=prev)
             
             elif levels["w_res"] > 0 and prev < levels["w_res"] and price >= levels["w_res"]:
                  if price < levels["s_res"] or levels["s_res"] == 0: 
-                    if now - session.last_trade_time["w_res"] > self.cooldown_seconds:
-                        # 滑点检查
-                        slippage = getattr(session, 'slippage', 1.0)
-                        if (price - levels["w_res"]) > slippage:
-                            session.log(f"⚠️ 忽略交易: 弱压力位触发但滑点过大 ({price} - {levels['w_res']} > {slippage})")
-                        else:
-                            self.execute_trade(session, "SHORT", price, "弱压力位", "w_res", prev_price=prev)
+                    # 弱压力位 (做空) - 仅允许 0 持仓时开仓
+                    if current_trades_count == 0:
+                        if now - session.last_trade_time["w_res"] > self.cooldown_seconds:
+                            # 滑点检查
+                            slippage = getattr(session, 'slippage', 1.0)
+                            if (price - levels["w_res"]) > slippage:
+                                session.log(f"⚠️ 忽略交易: 弱压力位触发但滑点过大 ({price} - {levels['w_res']} > {slippage})")
+                            else:
+                                self.execute_trade(session, "SHORT", price, "弱压力位", "w_res", prev_price=prev)
             
             # 2. 支撑位 (做多): 价格从上往下穿越或触碰 (prev > level >= price)
             if levels["s_sup"] > 0 and prev > levels["s_sup"] and price <= levels["s_sup"]:
-                if now - session.last_trade_time["s_sup"] > self.cooldown_seconds:
-                    # 滑点检查 (做多时，触发价是支撑位，成交价如果比支撑位低太多则滑点大)
-                    slippage = getattr(session, 'slippage', 1.0)
-                    if (levels["s_sup"] - price) > slippage:
-                        session.log(f"⚠️ 忽略交易: 强支撑位触发但滑点过大 ({levels['s_sup']} - {price} > {slippage})")
-                    else:
-                        # 强支撑位改为反买 (做空/跌破)
-                        self.execute_trade(session, "SHORT", price, "强支撑位(反买)", "s_sup", prev_price=prev)
+                # 强支撑位反买 (做空)
+                # 检查是否允许开仓: 0持仓 OR (1持仓且为弱位单)
+                allow_trade = False
+                if current_trades_count == 0:
+                    allow_trade = True
+                elif current_trades_count == 1:
+                    existing_trade = session.active_trades[0]
+                    if existing_trade['level_key'] in ['w_res', 'w_sup']:
+                        allow_trade = True
+
+                if allow_trade:
+                    if now - session.last_trade_time["s_sup"] > self.cooldown_seconds:
+                        # 滑点检查 (做多时，触发价是支撑位，成交价如果比支撑位低太多则滑点大)
+                        slippage = getattr(session, 'slippage', 1.0)
+                        if (levels["s_sup"] - price) > slippage:
+                            session.log(f"⚠️ 忽略交易: 强支撑位触发但滑点过大 ({levels['s_sup']} - {price} > {slippage})")
+                        else:
+                            # 强支撑位改为反买 (做空/跌破)
+                            self.execute_trade(session, "SHORT", price, "强支撑位(反买)", "s_sup", prev_price=prev)
             
             elif levels["w_sup"] > 0 and prev > levels["w_sup"] and price <= levels["w_sup"]:
                 if price > levels["s_sup"] or levels["s_sup"] == 0:
-                    if now - session.last_trade_time["w_sup"] > self.cooldown_seconds:
-                        # 滑点检查
-                        slippage = getattr(session, 'slippage', 1.0)
-                        if (levels["w_sup"] - price) > slippage:
-                            session.log(f"⚠️ 忽略交易: 弱支撑位触发但滑点过大 ({levels['w_sup']} - {price} > {slippage})")
-                        else:
-                            self.execute_trade(session, "LONG", price, "弱支撑位", "w_sup", prev_price=prev)
+                    # 弱支撑位 (做多) - 仅允许 0 持仓时开仓
+                    if current_trades_count == 0:
+                        if now - session.last_trade_time["w_sup"] > self.cooldown_seconds:
+                            # 滑点检查
+                            slippage = getattr(session, 'slippage', 1.0)
+                            if (levels["w_sup"] - price) > slippage:
+                                session.log(f"⚠️ 忽略交易: 弱支撑位触发但滑点过大 ({levels['w_sup']} - {price} > {slippage})")
+                            else:
+                                self.execute_trade(session, "LONG", price, "弱支撑位", "w_sup", prev_price=prev)
 
     def execute_trade(self, session, direction, price, reason, level_key, prev_price=0.0):
         session.last_trade_time[level_key] = time.time()
