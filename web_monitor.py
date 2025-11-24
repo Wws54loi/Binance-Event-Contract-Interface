@@ -317,6 +317,7 @@ class BoxMonitorBot:
                         else:
                             # 强压力位改为反买 (做多/突破)
                             self.execute_trade(session, "LONG", price, "强压力位(反买)", "s_res", prev_price=prev)
+                            session.stop("强压力位突破(反买)触发，箱体结束")
             
             elif levels["w_res"] > 0 and prev < levels["w_res"] and price >= levels["w_res"]:
                  if price < levels["s_res"] or levels["s_res"] == 0: 
@@ -351,6 +352,7 @@ class BoxMonitorBot:
                         else:
                             # 强支撑位改为反买 (做空/跌破)
                             self.execute_trade(session, "SHORT", price, "强支撑位(反买)", "s_sup", prev_price=prev)
+                            session.stop("强支撑位跌破(反买)触发，箱体结束")
             
             elif levels["w_sup"] > 0 and prev > levels["w_sup"] and price <= levels["w_sup"]:
                 if price > levels["s_sup"] or levels["s_sup"] == 0:
