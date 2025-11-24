@@ -53,7 +53,6 @@ class BoxSession:
         self.is_active = True
         self.stop_reason = None
         self.last_trade_time = {"s_res": 0, "w_res": 0, "w_sup": 0, "s_sup": 0, "mid_res": 0, "mid_sup": 0}
-        self.last_weak_event = None # 记录上一次触发的弱位类型 ('res' 或 'sup')，用于交替限制
     
     def log(self, msg):
         # 强制使用 UTC 时间转换为北京时间，确保准确
@@ -117,8 +116,7 @@ class BoxSession:
             "logs": self.logs,
             "is_active": self.is_active,
             "stop_reason": self.stop_reason,
-            "last_trade_time": self.last_trade_time,
-            "last_weak_event": getattr(self, 'last_weak_event', None)
+            "last_trade_time": self.last_trade_time
         }
 
     @staticmethod
@@ -148,7 +146,6 @@ class BoxSession:
         session.is_active = data.get("is_active", False)
         session.stop_reason = data.get("stop_reason")
         session.last_trade_time = data.get("last_trade_time", {"s_res": 0, "w_res": 0, "w_sup": 0, "s_sup": 0, "mid_res": 0, "mid_sup": 0})
-        session.last_weak_event = data.get("last_weak_event", None)
         return session
 
 class BoxMonitorBot:
@@ -381,33 +378,25 @@ class BoxMonitorBot:
                             if (price - levels["s_res"]) > slippage:
                                 session.log(f"⚠️ 忽略交易: 强压力位触发但滑点过大")
                             else:
-                                # 强压力位改为反买 (做多/突破)
-                                self.execute_trade(session, "LONG", price, "强压力位(反买)", "s_res", prev_price=prev)
+                                self.execute_trade(session, "SHORT", price, "强压力位", "s_res", prev_price=prev)
             
             elif levels["w_res"] > 0 and prev < levels["w_res"] and price >= levels["w_res"]:
                  if price < levels["s_res"] or levels["s_res"] == 0: 
                     # === 弱压力位优化: 检查前4根K线趋势 ===
                     allow_trade = True
-                    
-                    # 检查交替规则: 如果上次触发的是弱压，则本次不允许
-                    if getattr(session, 'last_weak_event', None) == 'res':
-                        allow_trade = False
-                        # session.log(f"⚠️ 忽略弱压力位: 需等待触碰一次弱支撑位") # 避免刷屏，可注释
-                    
-                    if allow_trade:
-                        if len(self.recent_klines) < 4:
-                            # 数据不足时允许交易，但记录日志供排查
-                            session.log(f"⚠️ 弱压力位: K线数据不足4根 ({len(self.recent_klines)})，跳过趋势检查允许交易")
-                            allow_trade = True
-                        else:
-                            # 必须都在弱压力位之下 (实体顶部 < w_res)
-                            # 如果有任意一根K线的实体顶部 >= 弱压力位，说明之前已经触碰或穿越
-                            for i, k in enumerate(self.recent_klines):
-                                body_top = max(k['o'], k['c'])
-                                if body_top >= levels["w_res"]:
-                                    allow_trade = False
-                                    session.log(f"⚠️ 忽略弱压力位: 第{i+1}根缓存K线实体顶部 {body_top} >= {levels['w_res']} (O:{k['o']}, C:{k['c']})")
-                                    break
+                    if len(self.recent_klines) < 4:
+                        # 数据不足时允许交易，但记录日志供排查
+                        session.log(f"⚠️ 弱压力位: K线数据不足4根 ({len(self.recent_klines)})，跳过趋势检查允许交易")
+                        allow_trade = True
+                    else:
+                        # 必须都在弱压力位之下 (实体顶部 < w_res)
+                        # 如果有任意一根K线的实体顶部 >= 弱压力位，说明之前已经触碰或穿越
+                        for i, k in enumerate(self.recent_klines):
+                            body_top = max(k['o'], k['c'])
+                            if body_top >= levels["w_res"]:
+                                allow_trade = False
+                                session.log(f"⚠️ 忽略弱压力位: 第{i+1}根缓存K线实体顶部 {body_top} >= {levels['w_res']} (O:{k['o']}, C:{k['c']})")
+                                break
                     
                     if allow_trade:
                         # 持仓限制: 仅允许0持仓
@@ -418,7 +407,6 @@ class BoxMonitorBot:
                                     session.log(f"⚠️ 忽略交易: 弱压力位触发但滑点过大")
                                 else:
                                     self.execute_trade(session, "SHORT", price, "弱压力位", "w_res", prev_price=prev)
-                                    session.last_weak_event = 'res' # 更新状态
             
             # 2. 支撑位 (做多)
             if levels["s_sup"] > 0 and prev > levels["s_sup"] and price <= levels["s_sup"]:
@@ -443,33 +431,25 @@ class BoxMonitorBot:
                             if (levels["s_sup"] - price) > slippage:
                                 session.log(f"⚠️ 忽略交易: 强支撑位触发但滑点过大")
                             else:
-                                # 强支撑位改为反买 (做空/跌破)
-                                self.execute_trade(session, "SHORT", price, "强支撑位(反买)", "s_sup", prev_price=prev)
+                                self.execute_trade(session, "LONG", price, "强支撑位", "s_sup", prev_price=prev)
             
             elif levels["w_sup"] > 0 and prev > levels["w_sup"] and price <= levels["w_sup"]:
                 if price > levels["s_sup"] or levels["s_sup"] == 0:
                     # === 弱支撑位优化: 检查前4根K线趋势 ===
                     allow_trade = True
-                    
-                    # 检查交替规则: 如果上次触发的是弱支撑，则本次不允许
-                    if getattr(session, 'last_weak_event', None) == 'sup':
-                        allow_trade = False
-                        # session.log(f"⚠️ 忽略弱支撑位: 需等待触碰一次弱压力位")
-                    
-                    if allow_trade:
-                        if len(self.recent_klines) < 4:
-                            # 数据不足时允许交易，但记录日志供排查
-                            session.log(f"⚠️ 弱支撑位: K线数据不足4根 ({len(self.recent_klines)})，跳过趋势检查允许交易")
-                            allow_trade = True
-                        else:
-                            # 必须都在弱支撑位之上 (实体底部 > w_sup)
-                            # 如果有任意一根K线的实体底部 <= 弱支撑位，说明之前已经触碰或穿越
-                            for i, k in enumerate(self.recent_klines):
-                                body_bottom = min(k['o'], k['c'])
-                                if body_bottom <= levels["w_sup"]:
-                                    allow_trade = False
-                                    session.log(f"⚠️ 忽略弱支撑位: 第{i+1}根缓存K线实体底部 {body_bottom} <= {levels['w_sup']} (O:{k['o']}, C:{k['c']})")
-                                    break
+                    if len(self.recent_klines) < 4:
+                        # 数据不足时允许交易，但记录日志供排查
+                        session.log(f"⚠️ 弱支撑位: K线数据不足4根 ({len(self.recent_klines)})，跳过趋势检查允许交易")
+                        allow_trade = True
+                    else:
+                        # 必须都在弱支撑位之上 (实体底部 > w_sup)
+                        # 如果有任意一根K线的实体底部 <= 弱支撑位，说明之前已经触碰或穿越
+                        for i, k in enumerate(self.recent_klines):
+                            body_bottom = min(k['o'], k['c'])
+                            if body_bottom <= levels["w_sup"]:
+                                allow_trade = False
+                                session.log(f"⚠️ 忽略弱支撑位: 第{i+1}根缓存K线实体底部 {body_bottom} <= {levels['w_sup']} (O:{k['o']}, C:{k['c']})")
+                                break
 
                     if allow_trade:
                         # 持仓限制: 仅允许0持仓
@@ -480,7 +460,6 @@ class BoxMonitorBot:
                                     session.log(f"⚠️ 忽略交易: 弱支撑位触发但滑点过大")
                                 else:
                                     self.execute_trade(session, "LONG", price, "弱支撑位", "w_sup", prev_price=prev)
-                                    session.last_weak_event = 'sup' # 更新状态
 
             # === 中介线逻辑 ===
             mid = levels.get("mid_line", 0.0)
