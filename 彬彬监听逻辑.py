@@ -298,6 +298,7 @@ class BoxMonitorBot:
 
     async def _connect_ws(self):
         # 使用组合流同时订阅 aggTrade, kline_1m, markPrice, indexPrice
+        # 注意：虽然订阅了 aggTrade，但核心逻辑将改为使用 markPrice 中的指数价格触发
         url = f"wss://fstream.binance.com/stream?streams={self.symbol}@aggTrade/{self.symbol}@kline_1m/{self.symbol}@markPrice@1s/{self.symbol}@indexPrice@1s"
         try:
             self.log_system(f"正在连接行情服务器 (AggTrade + Kline + Mark + Index)...")
@@ -314,33 +315,44 @@ class BoxMonitorBot:
                         stream = payload.get('stream')
                         data = payload.get('data')
 
-                        if 'aggTrade' in stream:
-                            price = float(data['p'])
-                            
+                        # 逻辑变更：使用 markPrice 流中的指数价格 (i) 作为核心触发价格
+                        # aggTrade 仅用于更新界面显示的最新成交价，不再触发交易逻辑
+                        if 'markPrice' in stream:
+                            # 优先获取指数价格 'i'，如果没有则回退到标记价格 'p'
+                            price = float(data.get('i', data.get('p', 0)))
+                            self.mark_price = float(data.get('p', 0))
+                            self.index_price = price # 更新指数价格显示
+
                             if self.previous_price == 0:
-                                # 智能初始化: 如果刚启动/重连时价格已经在位置下方，
-                                # 尝试使用最近一根K线的收盘价作为"前价"，以捕捉启动期间的穿越
+                                # 智能初始化
                                 if self.recent_klines:
                                     self.previous_price = self.recent_klines[-1]['c']
-                                    self.current_price = price
-                                    # 不使用 continue，直接进入 check_price 进行判断
+                                    self.current_price = price # 这里 current_price 实际上存的是指数价格
                                 else:
                                     self.previous_price = price
                                     self.current_price = price
                                     continue
 
+                            # 更新当前价格为指数价格 (用于逻辑判断)
                             self.current_price = price
                             self.last_ws_update = time.time()
                             
+                            # 使用指数价格进行核心逻辑判断
                             self.check_price(price)
                             self.check_trades(price)
                             
                             self.previous_price = price
-                        
-                        elif 'markPrice' in stream:
-                            self.mark_price = float(data['p'])
 
+                        elif 'aggTrade' in stream:
+                            # 仅更新界面显示的最新成交价，不触发逻辑
+                            # 注意：self.current_price 在上面被 markPrice 更新为指数价格了
+                            # 如果界面需要显示成交价，可能需要分离变量，但为了保持逻辑一致性，
+                            # 这里暂时不覆盖 self.current_price，或者仅在界面显示时区分。
+                            # 鉴于用户要求"完全改为指数价格"，这里不再使用 aggTrade 更新核心变量。
+                            pass
+                        
                         elif 'indexPrice' in stream:
+                            # 备用流，markPrice@1s 通常已经包含指数价格
                             self.index_price = float(data['p'])
 
                         elif 'kline' in stream:

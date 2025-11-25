@@ -213,7 +213,7 @@ latency = time.time() - last_update if last_update > 0 else 999
 latency_color = "green" if latency < 2 else "red"
 latency_text = f"{latency:.1f}s" if last_update > 0 else "无数据"
 
-st.markdown(f"### 状态: :{status_color}[{status_text}] | 最新价: **{bot.current_price:.2f}** | 标记价: **{getattr(bot, 'mark_price', 0):.2f}** | 指数价: **{getattr(bot, 'index_price', 0):.2f}** | 延迟: :{latency_color}[{latency_text}]")
+st.markdown(f"### 状态: :{status_color}[{status_text}] | 指数价: **{getattr(bot, 'index_price', 0):.2f}** | 延迟: :{latency_color}[{latency_text}]")
 
 # 箱体列表展示
 if not bot.sessions:
@@ -355,5 +355,5 @@ else:
                 )
 
 if bot.running:
-    time.sleep(0.5)
+    time.sleep(1)
     st.rerun()

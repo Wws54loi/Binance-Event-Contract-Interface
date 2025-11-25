@@ -237,9 +237,11 @@ class BoxMonitorBot:
                 time.sleep(3)
 
     async def _connect_ws(self):
-        url = f"wss://fstream.binance.com/ws/{self.symbol}@aggTrade"
+        # 使用 markPrice 流获取指数价格，更新频率为 1s (或 3s)
+        # 也可以使用 indexPrice@1s，但 markPrice 包含更多信息且通常更稳定
+        url = f"wss://fstream.binance.com/ws/{self.symbol}@markPrice"
         try:
-            self.log_system(f"正在连接行情服务器...")
+            self.log_system(f"正在连接行情服务器 (Index Price)...")
             # 优化: 增加 ping_interval 和 ping_timeout 保持连接活性
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 self.log_system("🟢 WebSocket 连接成功")
@@ -252,7 +254,9 @@ class BoxMonitorBot:
                     
                     try:
                         data = json.loads(msg)
-                        price = float(data['p'])
+                        # 使用 'i' (Index Price) 而不是 'p' (Mark Price) 或 aggTrade 的 'p'
+                        # 如果 'i' 不存在，回退到 'p' (Mark Price)
+                        price = float(data.get('i', data.get('p', 0)))
                         
                         # 初始化上一价格
                         if self.previous_price == 0:
