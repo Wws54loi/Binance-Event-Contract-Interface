@@ -553,6 +553,14 @@ bot = get_session_bot()
 if bot.__class__ is not BoxMonitorBot:
     bot.__class__ = BoxMonitorBot
 
+# 补丁: 确保新属性存在 (针对热重载)
+if not hasattr(bot, 'real_trading'):
+    bot.real_trading = False
+if not hasattr(bot, 'amount'):
+    bot.amount = "5"
+if not hasattr(bot, 'phone'):
+    bot.phone = None
+
 # 侧边栏
 with st.sidebar:
     st.header("⚙️ 箱体控制")
