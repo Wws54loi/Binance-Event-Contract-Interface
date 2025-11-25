@@ -9,6 +9,7 @@ import requests
 import html
 from datetime import datetime, timedelta, timezone
 import pandas as pd
+from 手机控制 import PhoneController
 
 # === 配置 ===
 BJ_TZ = timezone(timedelta(hours=8))
@@ -160,6 +161,64 @@ class BoxMonitorBot:
         self.stop_reason = None # 记录机器人停止原因
         self.previous_price = 0.0 # 记录上一次价格，用于判断穿越
         self.last_ws_update = 0 # 记录最后一次 WS 更新时间戳
+        
+        # 实盘控制
+        self.real_trading = False
+        self.amount = "5"
+        self.phone = None
+
+    def set_real_trading(self, enabled, amount="5"):
+        self.real_trading = enabled
+        self.amount = amount
+        if enabled:
+            if not self.phone:
+                self.phone = PhoneController()
+            self.log_system(f"实盘交易已开启 (金额: {amount})")
+        else:
+            self.log_system("实盘交易已关闭")
+
+    def prepare_real_trading(self):
+        if not self.real_trading or not self.phone:
+            return
+        try:
+            self.log_system("正在准备实盘环境...")
+            # 1. 滑动到顶部
+            self.phone.scroll_to_top(3)
+            self.phone.tap(563, 2260) #点击输入金额框
+            self.phone.clear_text() #清空文本框 (假设原有内容不超过10个字符)
+            self.phone.input_text(self.amount) #点击输入金额
+            self.phone.close_keyboard() #关闭键盘
+            self.phone.scroll_to_top(3) #点击向上滑动
+            self.log_system("实盘环境准备完成")
+            
+        except Exception as e:
+            self.log_system(f"实盘准备失败: {e}")
+
+    def _run_real_trade(self, direction):
+        try:
+            # 1. 点击买入/卖出
+            if direction == "LONG":
+                self.phone.tap(463, 2712) #上涨
+            else:
+                self.phone.tap(1025, 2714)
+            time.sleep(0.2)
+            self.phone.tap(782, 3014)
+            time.sleep(0.5)
+            self.log_system(f"实盘下单完成: {direction}，正在重置状态...")
+            # 3. 重置状态 (执行准备动作，等待下一次信号)
+            self.prepare_real_trading()
+            
+        except Exception as e:
+            self.log_system(f"实盘下单失败: {e}")
+
+    def manual_trade_test(self, direction):
+        """手动测试下单功能"""
+        if not self.real_trading:
+            self.log_system("⚠️ 实盘未开启，无法执行测试下单")
+            return
+        
+        self.log_system(f"🧪 手动触发测试下单: {direction}")
+        threading.Thread(target=self._run_real_trade, args=(direction,)).start()
 
     def start_new_session(self, s_res, w_res, w_sup, s_sup, name=None, slippage=1.0):
         with self.lock:
@@ -179,6 +238,10 @@ class BoxMonitorBot:
             send_ntfy(msg)
             self.sessions.append(new_session)
             
+            # 准备实盘环境
+            if self.real_trading:
+                threading.Thread(target=self.prepare_real_trading).start()
+            
         if not self.running:
             self.start_ws()
 
@@ -195,6 +258,10 @@ class BoxMonitorBot:
                 session.slippage = slippage
                 current_name = getattr(session, 'name', '未命名')
                 session.log(f"✅ 参数更新: {session.levels}, 名称: {current_name}, 滑点: {session.slippage}")
+                
+                # 更新参数后重新准备实盘环境 (确保金额正确)
+                if self.real_trading:
+                    threading.Thread(target=self.prepare_real_trading).start()
                 return True
             return False
 
@@ -387,6 +454,10 @@ class BoxMonitorBot:
         msg = f"🚀 触发交易! {direction} @ {price} | {reason} (前价: {prev_price})"
         session.log(msg)
         send_ntfy(msg)
+        
+        # 实盘下单
+        if self.real_trading and self.phone:
+            threading.Thread(target=self._run_real_trade, args=(direction,)).start()
 
     def check_trades(self, current_price):
         with self.lock:
@@ -516,6 +587,33 @@ with st.sidebar:
     if st.button("🛑 停止当前箱体", disabled=(active_session is None), use_container_width=True):
         bot.stop_current_session()
         st.rerun()
+
+    st.markdown("---")
+    st.subheader("📱 实盘控制")
+    
+    # 实盘开关
+    real_trading_on = st.checkbox("启用实盘交易 (手机控制)", value=bot.real_trading)
+    trade_amount = st.text_input("下单金额 (U)", value=bot.amount)
+    
+    if real_trading_on != bot.real_trading or trade_amount != bot.amount:
+        bot.set_real_trading(real_trading_on, trade_amount)
+        
+    if bot.real_trading:
+        st.caption("⚠️ 请确保手机已连接且处于交易界面")
+        
+        if st.button("🔄 重置/准备实盘环境", use_container_width=True):
+            threading.Thread(target=bot.prepare_real_trading).start()
+            st.toast("正在后台准备实盘环境...")
+            
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🟢 测试买入", use_container_width=True):
+                bot.manual_trade_test("LONG")
+                st.toast("已发送买入指令")
+        with c2:
+            if st.button("🔴 测试卖出", use_container_width=True):
+                bot.manual_trade_test("SHORT")
+                st.toast("已发送卖出指令")
 
     st.markdown("---")
     st.subheader("💾 数据管理")
