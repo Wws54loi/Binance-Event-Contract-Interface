@@ -797,5 +797,5 @@ else:
 
 # 自动刷新
 if bot.running:
-    time.sleep(0.5)
+    time.sleep(0.1) # 提高刷新率至 0.1s，以便尽可能实时显示 WebSocket 的最新数据
     st.rerun()
