@@ -127,6 +127,8 @@ class BoxMonitorBot:
         self.symbol = "ethusdt"
         self.sessions = [] # 存储所有 BoxSession
         self.current_price = 0.0
+        self.mark_price = 0.0 # 标记价格
+        self.index_price = 0.0 # 指数价格
         self.cooldown_seconds = 60
         self.lock = threading.Lock()
         self.bot_start_time = datetime.now(timezone.utc).astimezone(BJ_TZ) # 记录机器人启动时间
@@ -154,35 +156,15 @@ class BoxMonitorBot:
     def prepare_real_trading(self):
         if not self.real_trading or not self.phone:
             return
-        
         try:
             self.log_system("正在准备实盘环境...")
             # 1. 滑动到顶部
             self.phone.scroll_to_top(3)
-            time.sleep(0.5)
-            
-            # 2. 点击输入框 (假设坐标 350, 1430)
-            self.phone.tap(350, 1430)
-            time.sleep(0.5)
-            
-            # 3. 清除文本 (假设清除5次)
-            self.phone.clear_text(5)
-            time.sleep(0.5)
-            
-            # 4. 输入金额
-            self.phone.input_text(self.amount)
-            time.sleep(0.5)
-            
-            # 5. 收起键盘 (点击空白处或特定按钮，这里假设点击顶部空白处 500, 500)
-            # 或者使用 back 键收起键盘? 通常点击空白处比较安全
-            # 根据用户描述: "输入5 -> 收起键盘 -> 滑动到顶部"
-            # 假设收起键盘可以通过点击非输入区实现，或者 adb shell input keyevent 111 (ESCAPE/BACK)
-            # 这里先尝试点击空白处
-            self.phone.tap(500, 500) 
-            time.sleep(0.5)
-            
-            # 6. 滑动到顶部
-            self.phone.scroll_to_top(3)
+            self.phone.tap(563, 2260) #点击输入金额框
+            self.phone.clear_text() #清空文本框 (假设原有内容不超过10个字符)
+            self.phone.input_text(self.amount) #点击输入金额
+            self.phone.close_keyboard() #关闭键盘
+            self.phone.scroll_to_top(3) #点击向上滑动
             self.log_system("实盘环境准备完成")
             
         except Exception as e:
@@ -233,6 +215,10 @@ class BoxMonitorBot:
                 current_name = getattr(session, 'name', '未命名')
                 session.log(f"✅ 参数更新: {session.levels}, 名称: {current_name}, 滑点: {session.slippage}")
                 
+                # 如果开启了实盘，执行准备动作 (更新参数时触发)
+                if self.real_trading:
+                    threading.Thread(target=self.prepare_real_trading).start()
+
                 if len(self.recent_klines) == 0:
                      threading.Thread(target=self.fetch_initial_klines, daemon=True).start()
                 return True
@@ -311,10 +297,10 @@ class BoxMonitorBot:
                 time.sleep(3)
 
     async def _connect_ws(self):
-        # 使用组合流同时订阅 aggTrade 和 kline_1m
-        url = f"wss://fstream.binance.com/stream?streams={self.symbol}@aggTrade/{self.symbol}@kline_1m"
+        # 使用组合流同时订阅 aggTrade, kline_1m, markPrice, indexPrice
+        url = f"wss://fstream.binance.com/stream?streams={self.symbol}@aggTrade/{self.symbol}@kline_1m/{self.symbol}@markPrice@1s/{self.symbol}@indexPrice@1s"
         try:
-            self.log_system(f"正在连接行情服务器 (AggTrade + Kline)...")
+            self.log_system(f"正在连接行情服务器 (AggTrade + Kline + Mark + Index)...")
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 self.log_system("🟢 WebSocket 连接成功")
                 self.previous_price = 0.0 
@@ -351,6 +337,12 @@ class BoxMonitorBot:
                             
                             self.previous_price = price
                         
+                        elif 'markPrice' in stream:
+                            self.mark_price = float(data['p'])
+
+                        elif 'indexPrice' in stream:
+                            self.index_price = float(data['p'])
+
                         elif 'kline' in stream:
                             k = data['k']
                             if k['x']: # K线收盘
@@ -532,23 +524,27 @@ class BoxMonitorBot:
         try:
             # 1. 点击买入/卖出
             if direction == "LONG":
-                # 点击买涨 (假设坐标 250, 1600)
-                self.phone.tap(250, 1600)
+                self.phone.tap(463, 2712) #上涨
             else:
-                # 点击买跌 (假设坐标 800, 1600)
-                self.phone.tap(800, 1600)
+                self.phone.tap(1025, 2714)
             time.sleep(0.2)
-            
-            # 2. 点击确认 (假设坐标 540, 1800)
-            self.phone.tap(540, 1800)
+            self.phone.tap(782, 3014)
             time.sleep(0.5)
+            self.log_system(f"实盘下单完成: {direction}，正在重置状态...")
+            # 3. 重置状态 (执行准备动作，等待下一次信号)
+            self.prepare_real_trading()
             
-            # 3. 滑动到顶部
-            self.phone.scroll_to_top(3)
-            
-            self.log_system(f"实盘下单完成: {direction}")
         except Exception as e:
             self.log_system(f"实盘下单失败: {e}")
+
+    def manual_trade_test(self, direction):
+        """手动测试下单功能"""
+        if not self.real_trading:
+            self.log_system("⚠️ 实盘未开启，无法执行测试下单")
+            return
+        
+        self.log_system(f"🧪 手动触发测试下单: {direction}")
+        threading.Thread(target=self._run_real_trade, args=(direction,)).start()
 
     def check_trades(self, current_price):
         with self.lock:

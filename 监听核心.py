@@ -29,6 +29,10 @@ if bot.__class__ is not BoxMonitorBot:
 # 补丁: 确保新属性存在 (针对热重载)
 if not hasattr(bot, 'recent_klines'):
     bot.recent_klines = []
+if not hasattr(bot, 'mark_price'):
+    bot.mark_price = 0.0
+if not hasattr(bot, 'index_price'):
+    bot.index_price = 0.0
 if not hasattr(bot, 'real_trading'):
     bot.real_trading = False
 if not hasattr(bot, 'amount'):
@@ -63,6 +67,18 @@ with st.sidebar:
     
     if real_trading_on != bot.real_trading or trade_amount != bot.amount:
         bot.set_real_trading(real_trading_on, trade_amount)
+    
+    # 手动测试按钮
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        if st.button("🟢 测试买涨", disabled=not bot.real_trading, use_container_width=True):
+            bot.manual_trade_test("LONG")
+            st.toast("已发送买涨测试")
+    with col_t2:
+        if st.button("🔴 测试买跌", disabled=not bot.real_trading, use_container_width=True):
+            bot.manual_trade_test("SHORT")
+            st.toast("已发送买跌测试")
+
     st.markdown("---")
 
     col1, col2 = st.columns(2)
@@ -197,7 +213,7 @@ latency = time.time() - last_update if last_update > 0 else 999
 latency_color = "green" if latency < 2 else "red"
 latency_text = f"{latency:.1f}s" if last_update > 0 else "无数据"
 
-st.markdown(f"### 状态: :{status_color}[{status_text}] | 当前价格: **{bot.current_price:.2f}** | 延迟: :{latency_color}[{latency_text}]")
+st.markdown(f"### 状态: :{status_color}[{status_text}] | 最新价: **{bot.current_price:.2f}** | 标记价: **{getattr(bot, 'mark_price', 0):.2f}** | 指数价: **{getattr(bot, 'index_price', 0):.2f}** | 延迟: :{latency_color}[{latency_text}]")
 
 # 箱体列表展示
 if not bot.sessions:
