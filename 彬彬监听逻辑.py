@@ -7,6 +7,7 @@ import os
 import requests
 from datetime import datetime, timedelta, timezone
 from 通知模块 import send_ntfy
+from 手机控制 import PhoneController
 
 # === 配置 ===
 BJ_TZ = timezone(timedelta(hours=8))
@@ -134,6 +135,58 @@ class BoxMonitorBot:
         self.last_ws_update = 0 # 记录最后一次 WS 更新时间戳
         self.recent_klines = [] # 存储最近的K线 (o, h, l, c) 用于趋势判断
         self.last_kline_fetch_time = 0 # 上次尝试获取K线的时间
+        
+        # 实盘控制
+        self.real_trading = False
+        self.amount = "5"
+        self.phone = None
+
+    def set_real_trading(self, enabled, amount="5"):
+        self.real_trading = enabled
+        self.amount = amount
+        if enabled:
+            if not self.phone:
+                self.phone = PhoneController()
+            self.log_system(f"实盘交易已开启 (金额: {amount})")
+        else:
+            self.log_system("实盘交易已关闭")
+
+    def prepare_real_trading(self):
+        if not self.real_trading or not self.phone:
+            return
+        
+        try:
+            self.log_system("正在准备实盘环境...")
+            # 1. 滑动到顶部
+            self.phone.scroll_to_top(3)
+            time.sleep(0.5)
+            
+            # 2. 点击输入框 (假设坐标 350, 1430)
+            self.phone.tap(350, 1430)
+            time.sleep(0.5)
+            
+            # 3. 清除文本 (假设清除5次)
+            self.phone.clear_text(5)
+            time.sleep(0.5)
+            
+            # 4. 输入金额
+            self.phone.input_text(self.amount)
+            time.sleep(0.5)
+            
+            # 5. 收起键盘 (点击空白处或特定按钮，这里假设点击顶部空白处 500, 500)
+            # 或者使用 back 键收起键盘? 通常点击空白处比较安全
+            # 根据用户描述: "输入5 -> 收起键盘 -> 滑动到顶部"
+            # 假设收起键盘可以通过点击非输入区实现，或者 adb shell input keyevent 111 (ESCAPE/BACK)
+            # 这里先尝试点击空白处
+            self.phone.tap(500, 500) 
+            time.sleep(0.5)
+            
+            # 6. 滑动到顶部
+            self.phone.scroll_to_top(3)
+            self.log_system("实盘环境准备完成")
+            
+        except Exception as e:
+            self.log_system(f"实盘准备失败: {e}")
 
     def start_new_session(self, s_res, w_res, w_sup, s_sup, mid_line=0.0, name=None, slippage=1.0):
         with self.lock:
@@ -153,6 +206,10 @@ class BoxMonitorBot:
             new_session.log(msg)
             send_ntfy(msg)
             self.sessions.append(new_session)
+            
+            # 如果开启了实盘，执行准备动作
+            if self.real_trading:
+                threading.Thread(target=self.prepare_real_trading).start()
             
         if not self.running:
             self.start_ws()
@@ -466,6 +523,32 @@ class BoxMonitorBot:
         msg = f"🚀 触发交易! {direction} @ {price} | {reason} (前价: {prev_price})"
         session.log(msg)
         send_ntfy(msg)
+        
+        # 实盘操作
+        if self.real_trading and self.phone:
+            threading.Thread(target=self._run_real_trade, args=(direction,)).start()
+
+    def _run_real_trade(self, direction):
+        try:
+            # 1. 点击买入/卖出
+            if direction == "LONG":
+                # 点击买涨 (假设坐标 250, 1600)
+                self.phone.tap(250, 1600)
+            else:
+                # 点击买跌 (假设坐标 800, 1600)
+                self.phone.tap(800, 1600)
+            time.sleep(0.2)
+            
+            # 2. 点击确认 (假设坐标 540, 1800)
+            self.phone.tap(540, 1800)
+            time.sleep(0.5)
+            
+            # 3. 滑动到顶部
+            self.phone.scroll_to_top(3)
+            
+            self.log_system(f"实盘下单完成: {direction}")
+        except Exception as e:
+            self.log_system(f"实盘下单失败: {e}")
 
     def check_trades(self, current_price):
         with self.lock:

@@ -29,6 +29,12 @@ if bot.__class__ is not BoxMonitorBot:
 # 补丁: 确保新属性存在 (针对热重载)
 if not hasattr(bot, 'recent_klines'):
     bot.recent_klines = []
+if not hasattr(bot, 'real_trading'):
+    bot.real_trading = False
+if not hasattr(bot, 'amount'):
+    bot.amount = "5"
+if not hasattr(bot, 'phone'):
+    bot.phone = None
 
 # 侧边栏
 with st.sidebar:
@@ -49,6 +55,15 @@ with st.sidebar:
     
     slippage_limit = st.number_input("最大允许滑点 (USDT)", value=1.0, min_value=0.0, step=0.5)
     box_name = st.text_input("箱体名称 (可选)", value=getattr(active_session, 'name', "") if active_session else "")
+
+    st.markdown("---")
+    st.subheader("📱 实盘控制")
+    real_trading_on = st.checkbox("开启实盘 (Real Trading)", value=bot.real_trading)
+    trade_amount = st.text_input("交易金额 (USDT)", value=bot.amount)
+    
+    if real_trading_on != bot.real_trading or trade_amount != bot.amount:
+        bot.set_real_trading(real_trading_on, trade_amount)
+    st.markdown("---")
 
     col1, col2 = st.columns(2)
     with col1:

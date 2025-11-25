@@ -98,7 +98,7 @@ class PhoneController:
             # Output format: "Physical size: 1080x2400"
             try:
                 if "Physical size:" in output:
-                    parts = output.strip().split("Physical size: ")[1].split('x')
+                    parts = output.strip().split("Physical size: ")[1].split('x') 
                     return int(parts[0]), int(parts[1])
             except Exception as e:
                 print(f"获取分辨率失败: {e}")
@@ -232,6 +232,23 @@ class PhoneController:
         print("🔝 尝试发送 HOME 键 (KeyCode 122)...")
         return self.key_event(122)
 
+    def clear_text(self, count=10):
+        """清空文本框 (发送多次删除键)"""
+        # KeyCode 67 is DEL
+        print(f"🧹 正在清空文本框 (发送 {count} 次删除键)...")
+        # 批量发送删除键以提高速度
+        # 注意: 某些设备可能限制一次命令的长度，所以分批发送
+        batch_size = 10
+        remaining = count
+        
+        while remaining > 0:
+            current_batch = min(remaining, batch_size)
+            keys = ['67'] * current_batch
+            self.run_adb(['shell', 'input', 'keyevent'] + keys)
+            remaining -= current_batch
+            
+        return True
+
 # 测试代码
 if __name__ == "__main__":
     print("📱 初始化手机控制器...")
@@ -258,3 +275,6 @@ if __name__ == "__main__":
 
     # 尝试 HOME 键
     controller.try_home_key()
+
+    # 测试清空文本框
+    controller.clear_text(15)
